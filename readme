@@ -22,8 +22,8 @@ This is a list of all planned features and their implementation status.
 
 [-] Build / install
     [-] Download remote sources
-        [ ] Generate / verify checksums
-        [ ] Copy / extract sources to temp dir
+        [x] Generate / verify checksums
+        [-] Copy / extract sources to temp dir
     [ ] Dependency resolution
         [ ] Circular dependency checks
         [ ] Provides system
