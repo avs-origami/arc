@@ -1,0 +1,9 @@
+[package]
+name = "arc"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+http_req = "0.11.0"
+indicatif = "0.17.8"
+toml = "0.8.15"

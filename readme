@@ -1,0 +1,55 @@
+|---------------------------|
+| ARC                       |      .---.
+|---------------------------|     /\  \ \   ___ ____
+| A tiny package manager    |    /  \ -\ \_/__ / __/
+| written in Rust.          |   / / /\  \ \  \_\ |__.
+|---------------------------|  /__./  \.___\    \___/
+=~=~=~=~=~=~=~=~=~=~=~=~=~=~=
+
+Arc is a tiny package manager written in Rust, inspired by Kiss, and the
+successor to my previous project, YPM (https://github.com/avs-origami/ypm).
+
+=== Building
+============
+
+Arc depends on OpenSSL (for downloading sources from the internet). Make sure it
+is installed, then run 'cargo build --release' to compile.
+
+=== Progress
+============
+
+This is a list of all planned features and their implementation status.
+
+[-] Build / install
+    [-] Download remote sources
+        [ ] Generate / verify checksums
+        [ ] Copy / extract sources to temp dir
+    [ ] Dependency resolution
+        [ ] Circular dependency checks
+        [ ] Provides system
+    [ ] Conflict resolution
+    [ ] Execute build script in temp dir
+    [ ] Install built packages to sysroot
+    [ ] Remove installed packages
+
+[-] Package repositories
+    [x] Package format
+    [ ] Find packages in user-defined path
+    [ ] Fetch repositores from remote
+
+[-] CLI interface
+    [x] Argument parsing
+    [x] Color output
+    [x] Help message
+    [ ] Progress bars
+
+Key:
+
+[ ] = not started
+[-] = partially implemented
+[x] = fully implemented
+
+=== Contributing
+================
+
+Issues and pull requests are welcome.
