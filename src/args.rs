@@ -4,6 +4,7 @@ pub enum Op {
     Die(i32),
     Download(Vec<String>),
     New(String),
+    Purge,
 }
 
 pub fn parse(args: &Vec<String>) -> Op {
@@ -37,6 +38,7 @@ pub fn parse(args: &Vec<String>) -> Op {
                     return Op::Die(1);
                 }
             },
+            "p" | "purge" => return Op::Purge,
             "h" | "help" => return Op::Die(0),
             _ => return Op::Die(1),
         }

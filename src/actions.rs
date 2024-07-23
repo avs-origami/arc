@@ -23,11 +23,11 @@ checksums = []
 ";
 
 lazy_static! {
-    static ref HOME: String = env::var("HOME").unwrap_or_else(|_| {
+    pub static ref HOME: String = env::var("HOME").unwrap_or_else(|_| {
         log::die("$HOME is not set");
     });
 
-    static ref CACHE: String = format!("{}/.cache/arc", *HOME);
+    pub static ref CACHE: String = format!("{}/.cache/arc", *HOME);
 }
 
 pub fn print_help(code: i32) -> ! {
@@ -46,6 +46,7 @@ pub fn print_help(code: i32) -> ! {
     log::info_ident("i | install   Install built packages");
     log::info_ident("l | list      List installed packages");
     log::info_ident("n | new       Create a blank package");
+    log::info_ident("p | purge     Purge the package cache ($HOME/.cache/arc)");
     log::info_ident("r | remove    Remove packages");
     log::info_ident("s | sync      Sync remote repositories");
     log::info_ident("u | upgrade   Upgrade all packages");
@@ -71,6 +72,11 @@ pub fn new(name: String) -> Result<()> {
 
     build.write_all(b"#!/bin/sh -e\n").context(format!("Failed to write to {name}/build"))?;
 
+    Ok(())
+}
+
+pub fn purge() -> Result<()> {
+    fs::remove_dir_all((*CACHE).clone())?;
     Ok(())
 }
 
@@ -123,20 +129,30 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
     }
 
     for (pack, name) in filenames.iter().zip(packs) {
-        let build_dir = format!("{}/build/{name}", *CACHE);
-        fs::create_dir_all(&build_dir).context(format!("Couldn't create directory {build_dir}"))?;
+        let src_dir = format!("{}/build/{name}/src", *CACHE);
+        let dest_dir = format!("{}/build/{name}/dest", *CACHE);
+        fs::create_dir_all(&src_dir).context(format!("Couldn't create directory {src_dir}"))?;
+        fs::create_dir_all(&dest_dir).context(format!("Couldn't create directory {dest_dir}"))?;
+
         for file in pack {
             if file.contains(".tar") {
                 Command::new("tar")
-                    .args(["xf", file, "-C", &build_dir, "--strip-components=1"])
+                    .args(["xf", file, "-C", &src_dir, "--strip-components=1"])
                     .status()
                     .context(format!("Failed to untar {file}"))?;
             } else {
                 let basename = file.split('/').last().unwrap();
-                fs::copy(file, format!("{build_dir}/{basename}"))
+                fs::copy(file, format!("{src_dir}/{basename}"))
                     .context(format!("Couldn't copy {file} to build dir"))?;
             }
         }
+
+        let build_script = fs::canonicalize(format!("{name}/build"))?;
+        Command::new(build_script)
+            .arg(dest_dir)
+            .current_dir(src_dir)
+            .status()
+            .context(format!("Couldn't execute {name}/build"))?;
     }
 
     Ok(())

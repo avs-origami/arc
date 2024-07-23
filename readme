@@ -28,7 +28,7 @@ This is a list of all planned features and their implementation status.
         [ ] Circular dependency checks
         [ ] Provides system
     [ ] Conflict resolution
-    [ ] Build packages and install to destdir
+    [-] Build packages and install to destdir
     [ ] Install built packages to sysroot
     [ ] Remove installed packages
 

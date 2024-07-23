@@ -1,4 +1,7 @@
 use std::env;
+use std::fs;
+
+use anyhow::Context;
 
 mod args;
 mod actions;
@@ -7,6 +10,15 @@ mod log;
 use args::Op;
 
 fn main() {
+    match fs::create_dir_all((*actions::CACHE).clone())
+        .context("Failed to create cache dir $HOME/.cache/arc")
+    {
+        Ok(_) => (),
+        Err(e) => {
+            log::die(&format!("{:#}", &e));
+        }
+    }
+
     let cli_args: Vec<String> = env::args().collect();
     let status = match args::parse(&cli_args) {
         Op::Build(x) => actions::build(&x),
@@ -20,6 +32,7 @@ fn main() {
             }
         },
         Op::New(x) => actions::new(x),
+        Op::Purge => actions::purge(),
     };
 
     match status {
