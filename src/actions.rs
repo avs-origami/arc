@@ -27,6 +27,12 @@ lazy_static! {
         log::die("$HOME is not set");
     });
 
+    pub static ref ARC_PATH_STR: String = env::var("ARC_PATH").unwrap_or_else(|_| {
+        log::die("$ARC_PATH is not set");
+    });
+
+    pub static ref ARC_PATH: Vec<&'static str> = ARC_PATH_STR.split(':').collect();
+
     pub static ref CACHE: String = format!("{}/.cache/arc", *HOME);
 }
 
@@ -80,22 +86,39 @@ pub fn purge() -> Result<()> {
     Ok(())
 }
 
-pub fn parse_package(packs: &Vec<String>) -> Result<Vec<Table>> {
-    let package_files: Vec<String> = packs.iter()
-        .map(|x| {
-            fs::read_to_string(format!("{x}/package.toml"))
-                .context(format!("Failed to read {x}/package.toml"))
-        }).collect::<Result<_, _>>()?;
+pub fn parse_package(packs: &Vec<String>) -> Result<(Vec<Table>, Vec<String>)> {
+    let mut package_files = vec![];
+    let mut package_dirs = vec![];
+
+    for pack in packs {
+        if fs::metadata(format!("{pack}/package.toml")).is_ok() {
+            let content = fs::read_to_string(format!("{pack}/package.toml"))
+                .context(format!("Failed to read {pack}/package.toml"))?;
+
+            package_files.push(content);
+            package_dirs.push(format!("{pack}"))
+        } else {
+            for dir in &(*ARC_PATH) {
+                if fs::metadata(format!("{dir}/{pack}/package.toml")).is_ok() {
+                    let content = fs::read_to_string(format!("{dir}/{pack}/package.toml"))
+                        .context(format!("Failed to read {dir}/{pack}/package.toml"))?;
+
+                    package_files.push(content);
+                    package_dirs.push(format!("{dir}/{pack}"));
+                }
+            }
+        }
+    }
 
     let packs: Vec<Table> = package_files.iter().zip(packs)
         .map(|(x, y)| x.parse().context(format!("{y}/package.toml")))
         .collect::<Result<_, _>>()?;
 
-    Ok(packs)
+    Ok((packs, package_dirs))
 }
 
 pub fn download(packs: &Vec<String>) -> Result<Vec<Vec<String>>> {
-    let pack_toml = parse_package(packs)?;
+    let pack_toml = parse_package(packs)?.0;
     let files: Vec<Vec<String>> = pack_toml.iter().zip(packs)
         .map(|(x, y)| download_all(&x["meta"]["sources"], y))
         .collect::<Result<_>>()?;
@@ -119,7 +142,7 @@ pub fn generate_checksums() -> Result<()> {
 }
 
 pub fn build(packs: &Vec<String>) -> Result<()> {
-    let pack_toml = parse_package(&packs)?;
+    let (pack_toml, pack_dirs) = parse_package(&packs)?;
     let filenames = download(&packs)?;
     
     for ((pack, toml), name) in filenames.iter().zip(pack_toml).zip(packs) {
@@ -128,7 +151,7 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
         }
     }
 
-    for (pack, name) in filenames.iter().zip(packs) {
+    for ((pack, name), dir) in filenames.iter().zip(packs).zip(pack_dirs) {
         let src_dir = format!("{}/build/{name}/src", *CACHE);
         let dest_dir = format!("{}/build/{name}/dest", *CACHE);
         fs::create_dir_all(&src_dir).context(format!("Couldn't create directory {src_dir}"))?;
@@ -147,12 +170,14 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
             }
         }
 
-        let build_script = fs::canonicalize(format!("{name}/build"))?;
+        let build_script = fs::canonicalize(format!("{dir}/build"))
+            .context(format!("Couldn't canonicalize path {dir}/build"))?;
+
         Command::new(build_script)
             .arg(dest_dir)
             .current_dir(src_dir)
             .status()
-            .context(format!("Couldn't execute {name}/build"))?;
+            .context(format!("Couldn't execute {dir}/build"))?;
     }
 
     Ok(())

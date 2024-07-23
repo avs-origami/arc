@@ -28,13 +28,13 @@ This is a list of all planned features and their implementation status.
         [ ] Circular dependency checks
         [ ] Provides system
     [ ] Conflict resolution
-    [-] Build packages and install to destdir
+    [x] Build packages and install to destdir
     [ ] Install built packages to sysroot
     [ ] Remove installed packages
 
 [-] Package repositories
     [x] Package format
-    [ ] Find packages in user-defined path
+    [x] Find packages in user-defined path
     [ ] Fetch repositores from remote
 
 [-] CLI interface
