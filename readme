@@ -21,14 +21,14 @@ is installed, then run 'cargo build --release' to compile.
 This is a list of all planned features and their implementation status.
 
 [-] Build / install
-    [-] Download remote sources
+    [x] Download remote sources
         [x] Generate / verify checksums
-        [-] Copy / extract sources to temp dir
+        [x] Copy / extract sources to build dir
     [ ] Dependency resolution
         [ ] Circular dependency checks
         [ ] Provides system
     [ ] Conflict resolution
-    [ ] Execute build script in temp dir
+    [ ] Build packages and install to destdir
     [ ] Install built packages to sysroot
     [ ] Remove installed packages
 
@@ -41,6 +41,7 @@ This is a list of all planned features and their implementation status.
     [x] Argument parsing
     [x] Color output
     [x] Help message
+    [x] Error reporting
     [ ] Progress bars
 
 Key:

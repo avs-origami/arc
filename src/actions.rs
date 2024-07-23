@@ -2,13 +2,14 @@ use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
-use std::process;
+use std::process::{self, Command};
 
+use anyhow::{bail, Context, Result};
 use http_req::request;
 use lazy_static::lazy_static;
 use toml::{Table, Value};
 
-use crate::{log, Res};
+use crate::log;
 
 const PKG_TEMPLATE: &[u8] = b"[meta]
 version = \"\"
@@ -22,11 +23,14 @@ checksums = []
 ";
 
 lazy_static! {
-    static ref HOME: String = env::var("HOME").expect("$HOME is not set!");
+    static ref HOME: String = env::var("HOME").unwrap_or_else(|_| {
+        log::die("$HOME is not set");
+    });
+
     static ref CACHE: String = format!("{}/.cache/arc", *HOME);
 }
 
-pub fn print_help(code: i32) {
+pub fn print_help(code: i32) -> ! {
     eprintln!();
     eprintln!(r"    .---.");
     eprintln!(r"   /\  \ \   ___ ____");
@@ -47,52 +51,57 @@ pub fn print_help(code: i32) {
     log::info_ident("u | upgrade   Upgrade all packages");
     log::info_ident("v | version   Print version");
     eprintln!("\nCreated by AVS Origami\n");
-    process::exit(code);
+    process::exit(code)
 }
 
-pub fn new(name: String) -> Res<()> {
-    fs::create_dir(&name)?;
+pub fn new(name: String) -> Result<()> {
+    fs::create_dir(&name).context(format!("Failed to create directory {name}"))?;
     
-    let mut package = File::create(format!("{name}/package.toml"))?;
-    package.write_all(PKG_TEMPLATE)?;
+    let mut package = File::create(format!("{name}/package.toml"))
+        .context(format!("Failed to create {name}/package.toml"))?;
+
+    package.write_all(PKG_TEMPLATE).context(format!("Failed to write to {name}/package.toml"))?;
 
     let mut build = OpenOptions::new()
         .write(true)
         .create(true)
         .mode(0o755)
-        .open(format!("{name}/build"))?;
+        .open(format!("{name}/build"))
+        .context(format!("Failed to open {name}/build"))?;
 
-    build.write_all(b"#!/bin/sh -e\n")?;
+    build.write_all(b"#!/bin/sh -e\n").context(format!("Failed to write to {name}/build"))?;
 
     Ok(())
 }
 
-pub fn parse_package(packs: &Vec<String>) -> Res<Vec<Table>> {
+pub fn parse_package(packs: &Vec<String>) -> Result<Vec<Table>> {
     let package_files: Vec<String> = packs.iter()
-        .map(|x| fs::read_to_string(format!("{}/package.toml", x)))
-        .collect::<Result<_, _>>()?;
+        .map(|x| {
+            fs::read_to_string(format!("{x}/package.toml"))
+                .context(format!("Failed to read {x}/package.toml"))
+        }).collect::<Result<_, _>>()?;
 
-    let packs: Vec<Table> = package_files.iter()
-        .map(|x| x.parse())
+    let packs: Vec<Table> = package_files.iter().zip(packs)
+        .map(|(x, y)| x.parse().context(format!("{y}/package.toml")))
         .collect::<Result<_, _>>()?;
 
     Ok(packs)
 }
 
-pub fn download(packs: &Vec<String>) -> Res<Vec<Vec<String>>> {
+pub fn download(packs: &Vec<String>) -> Result<Vec<Vec<String>>> {
     let pack_toml = parse_package(packs)?;
     let files: Vec<Vec<String>> = pack_toml.iter().zip(packs)
         .map(|(x, y)| download_all(&x["meta"]["sources"], y))
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<_>>()?;
 
     Ok(files)
 }
 
-pub fn generate_checksums() -> Res<()> {
+pub fn generate_checksums() -> Result<()> {
     let filenames = download(&vec![".".into()])?;
     let mut hashes = vec![];
     for file in &filenames[0] {
-        let data: Vec<u8> = fs::read(file)?;
+        let data: Vec<u8> = fs::read(file).context("Failed ")?;
         let hash = blake3::hash(&data);
         hashes.push(hash.to_string());
     }
@@ -103,7 +112,7 @@ pub fn generate_checksums() -> Res<()> {
     Ok(())
 }
 
-pub fn build(packs: &Vec<String>) -> Res<()> {
+pub fn build(packs: &Vec<String>) -> Result<()> {
     let pack_toml = parse_package(&packs)?;
     let filenames = download(&packs)?;
     
@@ -113,22 +122,36 @@ pub fn build(packs: &Vec<String>) -> Res<()> {
         }
     }
 
+    for (pack, name) in filenames.iter().zip(packs) {
+        let build_dir = format!("{}/build/{name}", *CACHE);
+        fs::create_dir_all(&build_dir).context(format!("Couldn't create directory {build_dir}"))?;
+        for file in pack {
+            if file.contains(".tar") {
+                Command::new("tar")
+                    .args(["xf", file, "-C", &build_dir, "--strip-components=1"])
+                    .status()
+                    .context(format!("Failed to untar {file}"))?;
+            } else {
+                let basename = file.split('/').last().unwrap();
+                fs::copy(file, format!("{build_dir}/{basename}"))
+                    .context(format!("Couldn't copy {file} to build dir"))?;
+            }
+        }
+    }
+
     Ok(())
 }
 
-pub fn download_all(urls: &Value, name: &String) -> Res<Vec<String>> {
+pub fn download_all(urls: &Value, name: &String) -> Result<Vec<String>> {
     let mut fnames = vec![];
     if let Value::Array(x) = urls {
         let dir = format!("{}/dl", *CACHE);
-        fs::create_dir_all(&dir)?;
+        fs::create_dir_all(&dir).context(format!("Couldn't create directory {dir}"))?;
 
         for url in x {
             let mut url = url.to_string();
             url = url.replace("\"", "");
-            if ! (url.starts_with("https://") || url.starts_with("http://")) {
-                continue;
-            }
-
+            
             let filename = url.split('/').last().unwrap().to_owned();
             let filename = format!("{dir}/{filename}");
             fnames.push(filename.clone());
@@ -136,43 +159,53 @@ pub fn download_all(urls: &Value, name: &String) -> Res<Vec<String>> {
             if fs::metadata(filename.clone()).is_ok() {
                 continue;
             }
-            
-            loop { 
-                let mut body = Vec::new();
-                let res = request::get(&url, &mut body)?;
 
-                if res.status_code().is_success() {
-                    let mut out = File::create(filename)?;
-                    out.write_all(&body)?;
-                    break;
-                } else if res.status_code().is_redirect() {
-                    url = res.headers().get("Location").unwrap().to_owned();                    
-                } else {
-                    return Err(format!(
-                        "Failed to download source {url} ({} {})",
-                        res.status_code(),
-                        res.reason()
-                    ).into());
+            if url.starts_with("https://") || url.starts_with("http://") {            
+                loop { 
+                    let mut body = Vec::new();
+                    let res = request::get(&url, &mut body)
+                        .context(format!("Couldn't connect to {url}"))?;
+
+                    if res.status_code().is_success() {
+                        let mut out = File::create(&filename)?;
+                        out.write_all(&body)
+                            .context(format!("Couldn't save downloaded file to {filename}"))?;
+
+                        break;
+                    } else if res.status_code().is_redirect() {
+                        url = res.headers().get("Location").unwrap().to_owned();                    
+                    } else {
+                        bail!(
+                            "Failed to download source {url} ({} {})",
+                            res.status_code(),
+                            res.reason()
+                        );
+                    }
                 }
+            } else if url.starts_with("git+") {
+                bail!("Git sources are not yet supported ({url})");
+            } else {
+                fs::copy(format!("{name}/{url}"), filename)
+                    .context(format!("Could not copy local file {name}/{url} to build directory"))?;
             }
         } 
     } else {
-        return Err(format!("Problem parsing {name}/package.toml: sources is not an array").into());
+        bail!("Problem parsing {name}/package.toml: sources is not an array");
     }
 
     Ok(fnames)
 }
 
-pub fn verify_checksums(fnames: &Vec<String>, checksums: &Vec<Value>, pack: &String) -> Res<()> {
-    if checksums.len() == 0 && fnames.len() != 0 {
-        return Err(format!("No checksums found for package {pack}").into());
+pub fn verify_checksums(fnames: &Vec<String>, checksums: &Vec<Value>, pack: &String) -> Result<()> {
+    if fnames.len() > checksums.len() {
+        bail!("Missing one or more checksums for package {pack}");
     }
 
     for (file, sum) in fnames.iter().zip(checksums) {
-        let data: Vec<u8> = fs::read(file)?;
+        let data: Vec<u8> = fs::read(file).context(format!("Couldn't read file {file}"))?;
         let hash = blake3::hash(&data);
         if hash.to_string() != sum.to_string().replace("\"", "") {
-            return Err(format!("Checksum mismatch for file {file}").into());
+            bail!("Checksum mismatch for file {file}");
         }
     }
 

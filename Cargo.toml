@@ -4,6 +4,7 @@ version = "0.0.1"
 edition = "2021"
 
 [dependencies]
+anyhow = "1.0.86"
 blake3 = "1.5.3"
 http_req = "0.11.0"
 indicatif = "0.17.8"

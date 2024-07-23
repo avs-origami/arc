@@ -20,7 +20,7 @@ pub fn warn(msg: &str) {
     log(&format!("WARNING: {msg}"), 33);
 }
 
-pub fn die(msg: &str) {
+pub fn die(msg: &str) -> ! {
     log(&format!("ERROR: {msg}"), 31);
-    exit(1);
+    exit(1)
 }
