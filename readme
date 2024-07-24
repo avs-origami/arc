@@ -37,12 +37,13 @@ This is a list of all planned features and their implementation status.
     [x] Find packages in user-defined path
     [ ] Fetch repositores from remote
 
-[-] CLI interface
+[x] CLI interface
     [x] Argument parsing
     [x] Color output
     [x] Help message
     [x] Error reporting
-    [ ] Progress bars
+    [x] Progress messages
+    [x] Download progress bar
 
 Key:
 

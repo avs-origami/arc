@@ -24,3 +24,11 @@ pub fn die(msg: &str) -> ! {
     log(&format!("ERROR: {msg}"), 31);
     exit(1)
 }
+
+#[macro_export]
+macro_rules! info_fmt {
+    ($($t:tt)*) => {{
+        eprint!("\x1b[35m->\x1b[0m ");
+        eprintln!($($t)*);
+    }};
+}

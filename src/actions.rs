@@ -6,10 +6,14 @@ use std::process::{self, Command};
 
 use anyhow::{bail, Context, Result};
 use http_req::request;
+use indicatif::{ProgressBar, ProgressStyle};
 use lazy_static::lazy_static;
 use toml::{Table, Value};
 
 use crate::log;
+use crate::info_fmt;
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const PKG_TEMPLATE: &[u8] = b"[meta]
 version = \"\"
@@ -38,27 +42,32 @@ lazy_static! {
 
 pub fn print_help(code: i32) -> ! {
     eprintln!();
-    eprintln!(r"    .---.");
-    eprintln!(r"   /\  \ \   ___ ____");
-    eprintln!(r"  /  \ -\ \_/__ / __/");
-    eprintln!(r" / / /\  \ \  \_\ |__.");
-    eprintln!(r"/__./  \.___\    \___/");
-    eprintln!();
-    eprintln!("Usage: \x1b[33marc\x1b[0m [b|c|d|h|i|l|n|r|s|u|v] [pkg]..");
-    log::info_ident("b | build     Build packages");
-    log::info_ident("c | checksum  Generate checksums");
-    log::info_ident("d | download  Download sources");
-    log::info_ident("h | help      Print this help");
-    log::info_ident("i | install   Install built packages");
-    log::info_ident("l | list      List installed packages");
-    log::info_ident("n | new       Create a blank package");
-    log::info_ident("p | purge     Purge the package cache ($HOME/.cache/arc)");
-    log::info_ident("r | remove    Remove packages");
-    log::info_ident("s | sync      Sync remote repositories");
-    log::info_ident("u | upgrade   Upgrade all packages");
-    log::info_ident("v | version   Print version");
+    eprintln!("    \x1b[35m.---.");
+    eprintln!("   \x1b[35m/\\  \\ \\   \x1b[33m___ \x1b[36m____");
+    eprintln!("  \x1b[35m/  \\ -\\ \\\x1b[33m_/__ \x1b[36m/ __/");
+    eprintln!(" \x1b[35m/ / /\\  \\ \\  \x1b[33m\\_\x1b[36m\\ |__.");
+    eprintln!("\x1b[35m/__./  \\.___\\    \x1b[36m\\___/");
+    eprintln!("\x1b[0m");
+    eprintln!("Usage: \x1b[33marc\x1b[0m [b/c/d/h/i/l/n/p/r/s/u/v] [pkg]..");
+    log::info_ident("b / build     Build packages");
+    log::info_ident("c / checksum  Generate checksums");
+    log::info_ident("d / download  Download sources");
+    log::info_ident("h / help      Print this help");
+    log::info_ident("i / install   Install built packages");
+    log::info_ident("l / list      List installed packages");
+    log::info_ident("n / new       Create a blank package");
+    log::info_ident("p / purge     Purge the package cache ($HOME/.cache/arc)");
+    log::info_ident("r / remove    Remove packages");
+    log::info_ident("s / sync      Sync remote repositories");
+    log::info_ident("u / upgrade   Upgrade all packages");
+    log::info_ident("v / version   Print version");
     eprintln!("\nCreated by AVS Origami\n");
     process::exit(code)
+}
+
+pub fn version() -> ! {
+    log::info(&format!("Arc package manager version {VERSION}"));
+    process::exit(0)
 }
 
 pub fn new(name: String) -> Result<()> {
@@ -98,6 +107,7 @@ pub fn parse_package(packs: &Vec<String>) -> Result<(Vec<Table>, Vec<String>)> {
             package_files.push(content);
             package_dirs.push(format!("{pack}"))
         } else {
+            let mut broke = false;
             for dir in &(*ARC_PATH) {
                 if fs::metadata(format!("{dir}/{pack}/package.toml")).is_ok() {
                     let content = fs::read_to_string(format!("{dir}/{pack}/package.toml"))
@@ -105,7 +115,14 @@ pub fn parse_package(packs: &Vec<String>) -> Result<(Vec<Table>, Vec<String>)> {
 
                     package_files.push(content);
                     package_dirs.push(format!("{dir}/{pack}"));
+
+                    broke = true;
+                    break;
                 }
+            }
+
+            if ! broke {
+                bail!("Couldn't resolve package {pack}");
             }
         }
     }
@@ -117,17 +134,27 @@ pub fn parse_package(packs: &Vec<String>) -> Result<(Vec<Table>, Vec<String>)> {
     Ok((packs, package_dirs))
 }
 
-pub fn download(packs: &Vec<String>) -> Result<Vec<Vec<String>>> {
-    let pack_toml = parse_package(packs)?.0;
-    let files: Vec<Vec<String>> = pack_toml.iter().zip(packs)
-        .map(|(x, y)| download_all(&x["meta"]["sources"], y))
-        .collect::<Result<_>>()?;
+pub fn download(
+    packs: &Vec<String>,
+    pack_toml: Option<&Vec<Table>>,
+    force: bool
+) -> Result<Vec<Vec<String>>> {
+    let files: Vec<Vec<String>> = if let Some(n) = pack_toml {
+        n.iter().zip(packs)
+            .map(|(x, y)| download_all(&x["meta"]["sources"], y, force))
+            .collect::<Result<_>>()?
+    } else {
+        let pack_toml = parse_package(packs)?.0;
+        pack_toml.iter().zip(packs)
+            .map(|(x, y)| download_all(&x["meta"]["sources"], y, force))
+            .collect::<Result<_>>()?
+    };
 
     Ok(files)
 }
 
 pub fn generate_checksums() -> Result<()> {
-    let filenames = download(&vec![".".into()])?;
+    let filenames = download(&vec![".".into()], None, true)?;
     let mut hashes = vec![];
     for file in &filenames[0] {
         let data: Vec<u8> = fs::read(file).context("Failed ")?;
@@ -142,20 +169,34 @@ pub fn generate_checksums() -> Result<()> {
 }
 
 pub fn build(packs: &Vec<String>) -> Result<()> {
+    let mut info_packs = format!("Building packages: ");
+    for pack in packs {
+        info_packs.push_str(pack);
+        info_packs.push(' ');
+    }
+
+    log::info(&info_packs);
+
     let (pack_toml, pack_dirs) = parse_package(&packs)?;
-    let filenames = download(&packs)?;
+    let filenames = download(&packs, Some(&pack_toml), false)?;
     
     for ((pack, toml), name) in filenames.iter().zip(pack_toml).zip(packs) {
         if let Value::Array(x) = &toml["meta"]["checksums"] {
             verify_checksums(pack, &x, name)?;
+        } else {
+            bail!("Problem parsing {name}/package.toml: checksums is not an array");
         }
     }
 
     for ((pack, name), dir) in filenames.iter().zip(packs).zip(pack_dirs) {
+        info_fmt!("\x1b[36m{}\x1b[0m Building package", name);
+
         let src_dir = format!("{}/build/{name}/src", *CACHE);
         let dest_dir = format!("{}/build/{name}/dest", *CACHE);
         fs::create_dir_all(&src_dir).context(format!("Couldn't create directory {src_dir}"))?;
         fs::create_dir_all(&dest_dir).context(format!("Couldn't create directory {dest_dir}"))?;
+
+        info_fmt!("\x1b[36m{}\x1b[0m Extracting sources", name);
 
         for file in pack {
             if file.contains(".tar") {
@@ -170,20 +211,30 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
             }
         }
 
+        info_fmt!("\x1b[36m{}\x1b[0m Running build script", name);
+
         let build_script = fs::canonicalize(format!("{dir}/build"))
             .context(format!("Couldn't canonicalize path {dir}/build"))?;
 
-        Command::new(build_script)
+        let build_status = Command::new(build_script)
             .arg(dest_dir)
             .current_dir(src_dir)
+            // .stdout(process::Stdio::null())
+            // .stderr(process::Stdio::null())
             .status()
             .context(format!("Couldn't execute {dir}/build"))?;
+
+        if build_status.success() {
+            info_fmt!("\x1b[36m{}\x1b[0m Successfully built package", name);
+        } else {
+            bail!("Couldn't build package {name}");
+        }
     }
 
     Ok(())
 }
 
-pub fn download_all(urls: &Value, name: &String) -> Result<Vec<String>> {
+pub fn download_all(urls: &Value, name: &String, force: bool) -> Result<Vec<String>> {
     let mut fnames = vec![];
     if let Value::Array(x) = urls {
         let dir = format!("{}/dl", *CACHE);
@@ -197,15 +248,33 @@ pub fn download_all(urls: &Value, name: &String) -> Result<Vec<String>> {
             let filename = format!("{dir}/{filename}");
             fnames.push(filename.clone());
 
-            if fs::metadata(filename.clone()).is_ok() {
+            if fs::metadata(filename.clone()).is_ok() &&! force {
+                info_fmt!("\x1b[36m{}\x1b[0m {} already downloaded, skipping", name, url);
                 continue;
-            }
+            } 
 
-            if url.starts_with("https://") || url.starts_with("http://") {            
-                loop { 
-                    let mut body = Vec::new();
-                    let res = request::get(&url, &mut body)
+            if url.starts_with("https://") || url.starts_with("http://") {
+                loop {
+                    let mut body = vec![];
+                    let head = request::head(&url)?;
+                    let len = head.content_len().unwrap_or(0);
+                    let len_fmt = if len > 0 {
+                        format!(" ({})", indicatif::BinaryBytes(len as u64))
+                    } else {
+                        format!("")
+                    };
+
+                    info_fmt!("\x1b[36m{}\x1b[0m Downloading {}{}", name, url, len_fmt);
+                    
+                    let bar = ProgressBar::new(len as u64);
+                    bar.set_style(ProgressStyle::with_template(
+                        "\x1b[35m->\x1b[0m [{elapsed_precise}] [{bar:30.magenta/magenta}] ({bytes_per_sec}, ETA {eta})"
+                    ).unwrap().progress_chars("-> "));
+
+                    let res = request::get_with_update(&url, &mut body, |x| bar.inc(x as u64))
                         .context(format!("Couldn't connect to {url}"))?;
+
+                    bar.finish();
 
                     if res.status_code().is_success() {
                         let mut out = File::create(&filename)?;
@@ -222,6 +291,7 @@ pub fn download_all(urls: &Value, name: &String) -> Result<Vec<String>> {
                             res.reason()
                         );
                     }
+                    
                 }
             } else if url.starts_with("git+") {
                 bail!("Git sources are not yet supported ({url})");
@@ -238,6 +308,7 @@ pub fn download_all(urls: &Value, name: &String) -> Result<Vec<String>> {
 }
 
 pub fn verify_checksums(fnames: &Vec<String>, checksums: &Vec<Value>, pack: &String) -> Result<()> {
+    info_fmt!("\x1b[36m{}\x1b[0m Verifying checksums", pack);
     if fnames.len() > checksums.len() {
         bail!("Missing one or more checksums for package {pack}");
     }

@@ -6,7 +6,8 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.86"
 blake3 = "1.5.3"
-http_req = "0.11.0"
 indicatif = "0.17.8"
 lazy_static = "1.5.0"
 toml = "0.8.15"
+
+http_req = { git = "https://github.com/avs-origami/http_req" }

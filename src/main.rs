@@ -25,14 +25,14 @@ fn main() {
         Op::Checksum => actions::generate_checksums(),
         Op::Die(x) => actions::print_help(x),
         Op::Download(x) => {
-            let res = actions::download(&x);
-            match res {
+            match actions::download(&x, None, true) {
                 Ok(_) => Ok(()),
                 Err(e) => Err(e),
             }
         },
         Op::New(x) => actions::new(x),
         Op::Purge => actions::purge(),
+        Op::Version => actions::version(),
     };
 
     match status {

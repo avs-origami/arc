@@ -150,8 +150,7 @@ checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 [[package]]
 name = "http_req"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd68fe813419e7fd8982607f1b39e2a393226a98cf4cc905e716ba328e2a488f"
+source = "git+https://github.com/avs-origami/http_req#94bdd8a36e5a2acd3f4668c6f200fecb6d04af75"
 dependencies = [
  "native-tls",
  "unicase",
