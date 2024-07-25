@@ -1,17 +1,18 @@
 use std::env;
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{self, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::process::{self, Command};
 
 use anyhow::{bail, Context, Result};
+use glob::glob;
 use http_req::request;
 use indicatif::{ProgressBar, ProgressStyle};
 use lazy_static::lazy_static;
 use toml::{Table, Value};
 
 use crate::log;
-use crate::info_fmt;
+use crate::{info_fmt, info_ident_fmt};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -139,14 +140,20 @@ pub fn download(
     pack_toml: Option<&Vec<Table>>,
     force: bool
 ) -> Result<Vec<Vec<String>>> {
+    log::info("Downloading sources");
+
+    let longest = packs.iter().fold(&packs[0], |acc, item| {
+        if item.len() > acc.len() { &item } else { acc }
+    });
+
     let files: Vec<Vec<String>> = if let Some(n) = pack_toml {
         n.iter().zip(packs)
-            .map(|(x, y)| download_all(&x["meta"]["sources"], y, force))
+            .map(|(x, y)| download_all(&x["meta"]["sources"], y, force, longest.len()))
             .collect::<Result<_>>()?
     } else {
         let pack_toml = parse_package(packs)?.0;
         pack_toml.iter().zip(packs)
-            .map(|(x, y)| download_all(&x["meta"]["sources"], y, force))
+            .map(|(x, y)| download_all(&x["meta"]["sources"], y, force, longest.len()))
             .collect::<Result<_>>()?
     };
 
@@ -169,27 +176,40 @@ pub fn generate_checksums() -> Result<()> {
 }
 
 pub fn build(packs: &Vec<String>) -> Result<()> {
-    let mut info_packs = format!("Building packages: ");
-    for pack in packs {
-        info_packs.push_str(pack);
-        info_packs.push(' ');
+    let (pack_toml, pack_dirs) = parse_package(&packs)?;
+
+    let pad = packs.iter().fold(&packs[0], |acc, item| {
+        if item.len() > acc.len() { &item } else { acc }
+    }).len();
+
+    log::info("Building packages:");
+    for (pack, toml) in packs.iter().zip(&pack_toml) {
+        let version = toml["meta"]["version"].as_str().unwrap();
+        info_ident_fmt!("{: <pad$} @ {}", pack, version);
     }
 
-    log::info(&info_packs);
+    eprintln!();
 
-    let (pack_toml, pack_dirs) = parse_package(&packs)?;
+    log::info("Press Enter to continue or Ctrl+C to abort");
+    let _ = io::stdin().read(&mut [0u8]);
+
     let filenames = download(&packs, Some(&pack_toml), false)?;
-    
-    for ((pack, toml), name) in filenames.iter().zip(pack_toml).zip(packs) {
+    eprintln!("\n");
+   
+    log::info("Verifying checksums");
+    for ((pack, toml), name) in filenames.iter().zip(&pack_toml).zip(packs) {
         if let Value::Array(x) = &toml["meta"]["checksums"] {
-            verify_checksums(pack, &x, name)?;
+            verify_checksums(pack, &x, name, pad)?;
         } else {
             bail!("Problem parsing {name}/package.toml: checksums is not an array");
         }
     }
 
-    for ((pack, name), dir) in filenames.iter().zip(packs).zip(pack_dirs) {
-        info_fmt!("\x1b[36m{}\x1b[0m Building package", name);
+    eprintln!();
+
+    for (i, (((pack, name), dir), toml)) in filenames.iter().zip(packs).zip(pack_dirs).zip(pack_toml).enumerate() {
+        let version = toml["meta"]["version"].as_str().unwrap();
+        info_fmt!("\x1b[36m{}\x1b[0m Building package ({}/{})", name, i + 1, filenames.len());
 
         let src_dir = format!("{}/build/{name}/src", *CACHE);
         let dest_dir = format!("{}/build/{name}/dest", *CACHE);
@@ -211,38 +231,67 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
             }
         }
 
-        info_fmt!("\x1b[36m{}\x1b[0m Running build script", name);
+        info_fmt!("\x1b[36m{}\x1b[0m Running build script\n", name);
 
         let build_script = fs::canonicalize(format!("{dir}/build"))
             .context(format!("Couldn't canonicalize path {dir}/build"))?;
 
         let build_status = Command::new(build_script)
-            .arg(dest_dir)
+            .arg(&dest_dir)
             .current_dir(src_dir)
-            // .stdout(process::Stdio::null())
-            // .stderr(process::Stdio::null())
             .status()
             .context(format!("Couldn't execute {dir}/build"))?;
+
+        eprintln!();
 
         if build_status.success() {
             info_fmt!("\x1b[36m{}\x1b[0m Successfully built package", name);
         } else {
             bail!("Couldn't build package {name}");
         }
+
+        info_fmt!("\x1b[36m{}\x1b[0m Generating manifest", name);
+        
+        let manifest_dir = format!("{dest_dir}/var/cache/arc/installed");
+        let manifest = format!("{manifest_dir}/{name}");
+
+        let mut manifest_content = String::new();
+        for file in glob(&format!("{dest_dir}/**/*"))? {
+            let line = format!("{}\n", file?.display());
+            manifest_content.push_str(&line.replace(&dest_dir, ""));
+        }
+
+        fs::create_dir_all(&manifest_dir).context(format!("Couldn't create directory {manifest_dir}"))?;
+        File::create(&manifest).context(format!("Couldn't create file {manifest}"))?
+            .write_all(manifest_content.as_bytes()).context(format!("Couldn't write to file {manifest}"))?;
+
+        info_fmt!("\x1b[36m{}\x1b[0m Creating tarball", name);
+
+        let bin_dir = format!("{}/bin", *CACHE);
+        fs::create_dir_all(&bin_dir).context(format!("Couldn't create directory {bin_dir}"))?;
+
+        Command::new("tar")
+            .args(["czf", &format!("{}/{}@{}.tar.gz", bin_dir, name, version), "."])
+            .current_dir(&dest_dir)
+            .status()
+            .context("Couldn't create tarball of built package")?;
+
+        info_fmt!("\x1b[36m{}\x1b[0m Successfully created tarball", name);
+        eprintln!();
     }
 
     Ok(())
 }
 
-pub fn download_all(urls: &Value, name: &String, force: bool) -> Result<Vec<String>> {
+pub fn download_all(urls: &Value, name: &String, force: bool, longest_len: usize) -> Result<Vec<String>> {
     let mut fnames = vec![];
     if let Value::Array(x) = urls {
         let dir = format!("{}/dl", *CACHE);
         fs::create_dir_all(&dir).context(format!("Couldn't create directory {dir}"))?;
 
-        for url in x {
-            let mut url = url.to_string();
-            url = url.replace("\"", "");
+        for (i, url) in x.iter().enumerate() {
+            let og_url = url.to_string().replace("\"", "");
+            let mut url = url.to_string().replace("\"", "");
             
             let filename = url.split('/').last().unwrap().to_owned();
             let filename = format!("{dir}/{filename}");
@@ -258,33 +307,34 @@ pub fn download_all(urls: &Value, name: &String, force: bool) -> Result<Vec<Stri
                     let mut body = vec![];
                     let head = request::head(&url)?;
                     let len = head.content_len().unwrap_or(0);
-                    let len_fmt = if len > 0 {
-                        format!(" ({})", indicatif::BinaryBytes(len as u64))
-                    } else {
-                        format!("")
-                    };
+                    // let len_fmt = if len > 0 {
+                    //     format!(" ({})", indicatif::BinaryBytes(len as u64))
+                    // } else {
+                    //     format!("")
+                    // };
 
-                    info_fmt!("\x1b[36m{}\x1b[0m Downloading {}{}", name, url, len_fmt);
-                    
+                    // info_fmt!("\x1b[36m{}\x1b[0m Downloading {}{}", name, url, len_fmt);
+                    let bar = "[{elapsed_precise}] [{bar:30.magenta/magenta}] ({bytes_per_sec}, ETA {eta})";
+                    let bar_fmt = format!("  \x1b[35m->\x1b[0m \x1b[36m{name: <longest_len$}\x1b[0m {bar} ({}/{}) ({og_url})", i + 1, x.len());
+
                     let bar = ProgressBar::new(len as u64);
-                    bar.set_style(ProgressStyle::with_template(
-                        "\x1b[35m->\x1b[0m [{elapsed_precise}] [{bar:30.magenta/magenta}] ({bytes_per_sec}, ETA {eta})"
-                    ).unwrap().progress_chars("-> "));
+                    bar.set_style(ProgressStyle::with_template(&bar_fmt).unwrap().progress_chars("-> "));
 
                     let res = request::get_with_update(&url, &mut body, |x| bar.inc(x as u64))
                         .context(format!("Couldn't connect to {url}"))?;
 
-                    bar.finish();
-
                     if res.status_code().is_success() {
+                        bar.finish();
                         let mut out = File::create(&filename)?;
                         out.write_all(&body)
                             .context(format!("Couldn't save downloaded file to {filename}"))?;
 
                         break;
                     } else if res.status_code().is_redirect() {
+                        bar.finish_and_clear();
                         url = res.headers().get("Location").unwrap().to_owned();                    
                     } else {
+                        bar.finish_and_clear();
                         bail!(
                             "Failed to download source {url} ({} {})",
                             res.status_code(),
@@ -307,8 +357,12 @@ pub fn download_all(urls: &Value, name: &String, force: bool) -> Result<Vec<Stri
     Ok(fnames)
 }
 
-pub fn verify_checksums(fnames: &Vec<String>, checksums: &Vec<Value>, pack: &String) -> Result<()> {
-    info_fmt!("\x1b[36m{}\x1b[0m Verifying checksums", pack);
+pub fn verify_checksums(
+    fnames: &Vec<String>,
+    checksums: &Vec<Value>,
+    pack: &String,
+    pad: usize
+) -> Result<()> {
     if fnames.len() > checksums.len() {
         bail!("Missing one or more checksums for package {pack}");
     }
@@ -316,6 +370,14 @@ pub fn verify_checksums(fnames: &Vec<String>, checksums: &Vec<Value>, pack: &Str
     for (file, sum) in fnames.iter().zip(checksums) {
         let data: Vec<u8> = fs::read(file).context(format!("Couldn't read file {file}"))?;
         let hash = blake3::hash(&data);
+
+        info_ident_fmt!(
+            "\x1b[36m{: <pad$}\x1b[0m {} / {}",
+            pack,
+            &sum.as_str().unwrap()[..10],
+            &hash.to_string()[..10]
+        );
+
         if hash.to_string() != sum.to_string().replace("\"", "") {
             bail!("Checksum mismatch for file {file}");
         }

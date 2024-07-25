@@ -32,3 +32,11 @@ macro_rules! info_fmt {
         eprintln!($($t)*);
     }};
 }
+
+#[macro_export]
+macro_rules! info_ident_fmt {
+    ($($t:tt)*) => {{
+        eprint!("  \x1b[35m->\x1b[0m ");
+        eprintln!($($t)*);
+    }};
+}
