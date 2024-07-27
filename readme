@@ -12,8 +12,7 @@ successor to my previous project, YPM (https://github.com/avs-origami/ypm).
 === Building
 ============
 
-Arc depends on OpenSSL (for downloading sources from the internet). Make sure it
-is installed, then run 'cargo build --release' to compile.
+Just run 'cargo build --release' and copy 'target/release/arc' to your bin dir.
 
 === Progress
 ============
