@@ -3,6 +3,7 @@ pub enum Op {
     Checksum,
     Die(i32),
     Download(Vec<String>),
+    Install(Vec<String>),
     New(String),
     Purge,
     Version,
@@ -28,6 +29,13 @@ pub fn parse(args: &Vec<String>) -> Op {
             "d" | "download" => {
                 if args.len() > 2 {
                     return Op::Download(args[2..].to_vec());
+                } else {
+                    return Op::Die(1);
+                }
+            },
+            "i" | "install" => {
+                if args.len() > 2 {
+                    return Op::Install(args[2..].to_vec());
                 } else {
                     return Op::Die(1);
                 }

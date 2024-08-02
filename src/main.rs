@@ -30,6 +30,7 @@ fn main() {
                 Err(e) => Err(e),
             }
         },
+        Op::Install(x) => actions::install(&x),
         Op::New(x) => actions::new(x),
         Op::Purge => actions::purge(),
         Op::Version => actions::version(),

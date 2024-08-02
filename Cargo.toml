@@ -11,4 +11,5 @@ indicatif = "0.17.8"
 lazy_static = "1.5.0"
 toml = "0.8.15"
 
+nix = { version = "0.29.0", features = ["user"]}
 http_req = { git = "https://github.com/avs-origami/http_req", default-features = false, features = ["rust-tls"]}

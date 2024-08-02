@@ -28,7 +28,7 @@ This is a list of all planned features and their implementation status.
         [ ] Provides system
     [ ] Conflict resolution
     [x] Build packages and install to destdir
-    [-] Install built packages to sysroot
+    [x] Install built packages to sysroot
     [ ] Remove installed packages
 
 [-] Package repositories

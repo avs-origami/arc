@@ -9,7 +9,9 @@ use glob::glob;
 use http_req::request;
 use indicatif::{ProgressBar, ProgressStyle};
 use lazy_static::lazy_static;
+use nix::unistd::Uid;
 use toml::{Table, Value};
+use toml::map::Map;
 
 use crate::log;
 use crate::{info_fmt, info_ident_fmt};
@@ -207,7 +209,7 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
 
     eprintln!();
 
-    for (i, (((pack, name), dir), toml)) in filenames.iter().zip(packs).zip(pack_dirs).zip(pack_toml).enumerate() {
+    for (i, (((pack, name), dir), toml)) in filenames.iter().zip(packs).zip(pack_dirs).zip(&pack_toml).enumerate() {
         let version = toml["meta"]["version"].as_str().unwrap();
         info_fmt!("\x1b[36m{}\x1b[0m Building package ({}/{})", name, i + 1, filenames.len());
 
@@ -278,6 +280,71 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
 
         info_fmt!("\x1b[36m{}\x1b[0m Successfully created tarball", name);
         eprintln!();
+    }
+
+    log::info("Installing built packages.");
+    log::info("Press Enter to continue or Ctrl+C to abort");
+    let _ = io::stdin().read(&mut [0u8]);
+    install_all(packs, &pack_toml)?;
+ 
+    Ok(())
+}
+
+pub fn install(packs: &Vec<String>) -> Result<()> {
+    let (pack_toml, _) = parse_package(&packs)?;
+    install_all(packs, &pack_toml)?;
+    Ok(())
+}
+
+pub fn install_all(packs: &Vec<String>, pack_toml: &Vec<Map<String, Value>>) -> Result<()> {
+    let su_command = if fs::metadata("/bin/sudo").is_ok() {
+        "sudo"
+    } else if fs::metadata("bin/doas").is_ok() {
+        "doas"
+    } else if fs::metadata("/bin/su").is_ok() {
+        "su"
+    } else {
+        ""
+    };
+
+    if ! Uid::effective().is_root() {
+        log::info("Using sudo to become root.");
+    }
+
+    for (i, (name, toml)) in packs.iter().zip(pack_toml).enumerate() {
+        let version = toml["meta"]["version"].as_str().unwrap();
+        let bin_file = format!("{}/bin/{}@{}.tar.gz", *CACHE, name, version);
+
+        if Uid::effective().is_root() {
+            Command::new("tar")
+                .args(["xf", &bin_file, "-C", "/"])
+                .status()
+                .context(format!("Couldn't extract {bin_file} to /"))?;
+        } else {
+            match su_command {
+                "sudo" => {
+                    Command::new("sudo")
+                        .args(["tar", "xf", &bin_file, "-C", "/"])
+                        .status()
+                        .context(format!("Couldn't extract {bin_file} to /"))?;
+                },
+                "doas" => {
+                    Command::new("doas")
+                        .args(["tar", "xf", &bin_file, "-C", "/"])
+                        .status()
+                        .context(format!("Couldn't extract {bin_file} to /"))?;
+                },
+                "su" => {
+                    Command::new("su")
+                        .args(["-c", "tar", "xf", &bin_file, "-C", "/"])
+                        .status()
+                        .context(format!("Couldn't extract {bin_file} to /"))?;
+                },
+                _ => bail!("Couldn't find a command to elevate privileges"),
+            }
+        }
+
+        info_fmt!("Successfully installed {} @ {} ({}/{})", name, version, i + 1, packs.len());
     }
 
     Ok(())
