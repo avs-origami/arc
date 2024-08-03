@@ -33,6 +33,7 @@ fn main() {
         Op::Install(x) => actions::install(&x),
         Op::New(x) => actions::new(x),
         Op::Purge => actions::purge(),
+        Op::Remove(x) => actions::remove(&x),
         Op::Version => actions::version(),
     };
 

@@ -6,6 +6,7 @@ pub enum Op {
     Install(Vec<String>),
     New(String),
     Purge,
+    Remove(Vec<String>),
     Version,
 }
 
@@ -43,6 +44,13 @@ pub fn parse(args: &Vec<String>) -> Op {
             "n" | "new" => {
                 if args.len() > 2 {
                     return Op::New(args[2].clone());
+                } else {
+                    return Op::Die(1);
+                }
+            },
+            "r" | "remove" => {
+                if args.len() > 2 {
+                    return Op::Remove(args[2..].to_vec());
                 } else {
                     return Op::Die(1);
                 }

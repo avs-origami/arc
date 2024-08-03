@@ -209,10 +209,7 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
 
     eprintln!();
 
-    for (i, (((pack, name), dir), toml)) in filenames.iter()
-        .zip(packs).zip(pack_dirs).zip(&pack_toml)
-        .enumerate()
-    {
+    for (i, (((pack, name), dir), toml)) in filenames.iter().zip(packs).zip(pack_dirs).zip(&pack_toml).enumerate() {
         let version = toml["meta"]["version"].as_str().unwrap();
         info_fmt!("\x1b[36m{}\x1b[0m Building package ({}/{})", name, i + 1, filenames.len());
 
