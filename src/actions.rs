@@ -306,9 +306,17 @@ pub fn install(packs: &Vec<String>) -> Result<()> {
 
 pub fn remove(packs: &Vec<String>) -> Result<()> {
     for pack in packs {
-        let manifest = fs::read_to_string(format!("/var/cache/arc/installed/{pack}"))?;
-        for file in manifest.lines() {
-            fs::remove_file(file)?;
+        let manifest = fs::read_to_string(format!("/var/cache/arc/installed/{pack}"))
+            .context(format!("Couldn't read package manifest at /var/cache/arc/installed/{pack}"))?;
+
+        for file in manifest.lines().rev() {
+            let real_path = fs::canonicalize(file)?;
+            if fs::metadata(&real_path)?.is_dir() {
+                let _ = fs::remove_dir(&real_path);
+            } else {
+                fs::remove_file(&real_path)
+                    .context(format!("Couldn't remove file {}", real_path.display()))?;
+            }
         }
     }
 
