@@ -43,6 +43,12 @@ lazy_static! {
     pub static ref CACHE: String = format!("{}/.cache/arc", *HOME);
 }
 
+#[derive(Clone, Debug)]
+pub struct Package {
+    pub name: String,
+    pub depth: usize,
+}
+
 pub fn print_help(code: i32) -> ! {
     eprintln!();
     eprintln!("    \x1b[35m.---.");
@@ -184,10 +190,21 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
         if item.len() > acc.len() { &item } else { acc }
     }).len();
 
-    log::info("Building packages:");
+    let deps = resolve_deps(packs, &pack_toml, 0)?;
+    let dep_names: Vec<String> = deps.iter().map(|x| x.name.clone()).collect();
+    let (dep_toml, dep_dirs) = parse_package(&dep_names)?;
+
+    log::info("Building packages (explicit):");
     for (pack, toml) in packs.iter().zip(&pack_toml) {
         let version = toml["meta"]["version"].as_str().unwrap();
         info_ident_fmt!("{: <pad$} @ {}", pack, version);
+    }
+
+    log::info("Building packages (implicit):");
+    for (pack, toml) in deps.iter().zip(&dep_toml) {
+        let version = toml["meta"]["version"].as_str().unwrap();
+        eprint!("{}", " ".repeat(pack.depth * 2));
+        info_ident_fmt!("{: <pad$} @ {}", pack.name, version);
     }
 
     eprintln!();
@@ -195,6 +212,62 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
     log::info("Press Enter to continue or Ctrl+C to abort");
     let _ = io::stdin().read(&mut [0u8]);
 
+    build_all(packs, pack_toml, pack_dirs, pad)?;
+    Ok(())
+
+}
+
+pub fn install(packs: &Vec<String>) -> Result<()> {
+    let (pack_toml, _) = parse_package(&packs)?;
+    install_all(packs, &pack_toml)?;
+    Ok(())
+}
+
+pub fn remove(packs: &Vec<String>) -> Result<()> {
+    for pack in packs {
+        let manifest = fs::read_to_string(format!("/var/cache/arc/installed/{pack}"))
+            .context(format!("Couldn't read package manifest at /var/cache/arc/installed/{pack}"))?;
+
+        for file in manifest.lines().rev() {
+            let real_path = fs::canonicalize(file)?;
+            if fs::metadata(&real_path)?.is_dir() {
+                let _ = fs::remove_dir(&real_path);
+            } else {
+                fs::remove_file(&real_path)
+                    .context(format!("Couldn't remove file {}", real_path.display()))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub fn resolve_deps(
+    packs: &Vec<String>,
+    pack_toml: &Vec<Map<String, Value>>,
+    depth: usize,
+) -> Result<Vec<Package>> {
+    let mut output = vec![];
+    for pack in pack_toml {
+        for (name, _ver_req) in pack["deps"].as_table().unwrap() {
+            let res = Package { name: name.to_string(), depth };
+            output.push(res);
+
+            let (dep_toml, _) = parse_package(&vec![name.to_string()])?;
+            let mut deps = resolve_deps(&vec![name.to_string()], &dep_toml, depth + 1)?;
+            output.append(&mut deps);
+        }
+    }
+
+    Ok(output)
+}
+
+pub fn build_all(
+    packs: &Vec<String>,
+    pack_toml: Vec<Map<String, Value>>,
+    pack_dirs: Vec<String>,
+    pad: usize
+) -> Result<()> {
     let filenames = download(&packs, Some(&pack_toml), false)?;
     eprintln!("\n");
    
@@ -298,31 +371,6 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
     Ok(())
 }
 
-pub fn install(packs: &Vec<String>) -> Result<()> {
-    let (pack_toml, _) = parse_package(&packs)?;
-    install_all(packs, &pack_toml)?;
-    Ok(())
-}
-
-pub fn remove(packs: &Vec<String>) -> Result<()> {
-    for pack in packs {
-        let manifest = fs::read_to_string(format!("/var/cache/arc/installed/{pack}"))
-            .context(format!("Couldn't read package manifest at /var/cache/arc/installed/{pack}"))?;
-
-        for file in manifest.lines().rev() {
-            let real_path = fs::canonicalize(file)?;
-            if fs::metadata(&real_path)?.is_dir() {
-                let _ = fs::remove_dir(&real_path);
-            } else {
-                fs::remove_file(&real_path)
-                    .context(format!("Couldn't remove file {}", real_path.display()))?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
 pub fn install_all(packs: &Vec<String>, pack_toml: &Vec<Map<String, Value>>) -> Result<()> {
     let su_command = if fs::metadata("/bin/sudo").is_ok() {
         "sudo"
@@ -377,7 +425,7 @@ pub fn install_all(packs: &Vec<String>, pack_toml: &Vec<Map<String, Value>>) -> 
     Ok(())
 }
 
-pub fn download_all(urls: &Value, name: &String, force: bool, longest_len: usize) -> Result<Vec<String>> {
+pub fn download_all(urls: &Value, name: &String, force: bool, pad: usize) -> Result<Vec<String>> {
     let mut fnames = vec![];
     if let Value::Array(x) = urls {
         let dir = format!("{}/dl", *CACHE);
@@ -401,15 +449,8 @@ pub fn download_all(urls: &Value, name: &String, force: bool, longest_len: usize
                     let mut body = vec![];
                     let head = request::head(&url)?;
                     let len = head.content_len().unwrap_or(0);
-                    // let len_fmt = if len > 0 {
-                    //     format!(" ({})", indicatif::BinaryBytes(len as u64))
-                    // } else {
-                    //     format!("")
-                    // };
-
-                    // info_fmt!("\x1b[36m{}\x1b[0m Downloading {}{}", name, url, len_fmt);
                     let bar = "[{elapsed_precise}] [{bar:30.magenta/magenta}] ({bytes_per_sec}, ETA {eta})";
-                    let bar_fmt = format!("  \x1b[35m->\x1b[0m \x1b[36m{name: <longest_len$}\x1b[0m {bar} ({}/{}) ({og_url})", i + 1, x.len());
+                    let bar_fmt = format!("  \x1b[35m->\x1b[0m \x1b[36m{name: <pad$}\x1b[0m {bar} ({}/{}) ({og_url})", i + 1, x.len());
 
                     let bar = ProgressBar::new(len as u64);
                     bar.set_style(ProgressStyle::with_template(&bar_fmt).unwrap().progress_chars("-> "));

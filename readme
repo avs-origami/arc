@@ -23,7 +23,7 @@ This is a list of all planned features and their implementation status.
     [x] Download remote sources
         [x] Generate / verify checksums
         [x] Copy / extract sources to build dir
-    [ ] Dependency resolution
+    [-] Dependency resolution
         [ ] Circular dependency checks
         [ ] Provides system
     [ ] Conflict resolution
