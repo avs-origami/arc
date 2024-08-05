@@ -172,7 +172,8 @@ pub fn generate_checksums() -> Result<()> {
     let filenames = download(&vec![".".into()], None, true)?;
     let mut hashes = vec![];
     for file in &filenames[0] {
-        let data: Vec<u8> = fs::read(file).context("Failed ")?;
+        let file = if file.starts_with("tar+") { &file[4..] } else { &file[..] };
+        let data: Vec<u8> = fs::read(file).context("Failed to read source file")?;
         let hash = blake3::hash(&data);
         hashes.push(hash.to_string());
     }
@@ -297,7 +298,12 @@ pub fn build_all(
         info_fmt!("\x1b[36m{}\x1b[0m Extracting sources", name);
 
         for file in pack {
-            if file.contains(".tar") {
+            if file.starts_with("tar+") {
+                let file = &file[4..];
+                let basename = file.split('/').last().unwrap();
+                fs::copy(file, format!("{src_dir}/{basename}"))
+                    .context(format!("Couldn't copy {file} to build dir"))?;
+            } else if file.contains(".tar") {
                 Command::new("tar")
                     .args(["xf", file, "-C", &src_dir, "--strip-components=1"])
                     .status()
@@ -437,12 +443,18 @@ pub fn download_all(urls: &Value, name: &String, force: bool, pad: usize) -> Res
             
             let filename = url.split('/').last().unwrap().to_owned();
             let filename = format!("{dir}/{filename}");
-            fnames.push(filename.clone());
 
+            if url.starts_with("tar+") {
+                url = url[4..].to_string();
+                fnames.push("tar+".to_owned() + &filename);
+            } else {
+                fnames.push(filename.clone());
+            }
+ 
             if fs::metadata(filename.clone()).is_ok() &&! force {
                 info_fmt!("\x1b[36m{}\x1b[0m {} already downloaded, skipping", name, url);
                 continue;
-            } 
+            }
 
             if url.starts_with("https://") || url.starts_with("http://") {
                 loop {
@@ -460,7 +472,7 @@ pub fn download_all(urls: &Value, name: &String, force: bool, pad: usize) -> Res
 
                     if res.status_code().is_success() {
                         bar.finish();
-                        let mut out = File::create(&filename)?;
+                        let mut out = File::create(&filename).context(format!("Couldn't create file {filename}"))?;
                         out.write_all(&body)
                             .context(format!("Couldn't save downloaded file to {filename}"))?;
 
@@ -503,6 +515,7 @@ pub fn verify_checksums(
     }
 
     for (file, sum) in fnames.iter().zip(checksums) {
+        let file = if file.starts_with("tar+") { &file[4..] } else { &file[..] };
         let data: Vec<u8> = fs::read(file).context(format!("Couldn't read file {file}"))?;
         let hash = blake3::hash(&data);
 
