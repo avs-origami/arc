@@ -24,12 +24,7 @@ fn main() {
         Op::Build(x) => actions::build(&x),
         Op::Checksum => actions::generate_checksums(),
         Op::Die(x) => actions::print_help(x),
-        Op::Download(x) => {
-            match actions::download(&x, None, true) {
-                Ok(_) => Ok(()),
-                Err(e) => Err(e),
-            }
-        },
+        Op::Download(x) => actions::action_download(&x),
         Op::Install(x) => actions::install(&x),
         Op::New(x) => actions::new(x),
         Op::Purge => actions::purge(),

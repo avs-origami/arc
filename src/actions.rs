@@ -104,6 +104,16 @@ pub fn purge() -> Result<()> {
     Ok(())
 }
 
+pub fn is_installed(pack: &String, version: &str) -> Result<bool> {
+    let mut path = if version == "*" {
+        glob(&format!("/var/cache/arc/installed/{pack}*"))?
+    } else {
+        glob(&format!("/var/cache/arc/installed/{pack}@{version}"))?
+    };
+
+    Ok(path.next().is_some())
+}
+
 pub fn parse_package(packs: &Vec<String>) -> Result<(Vec<Table>, Vec<String>)> {
     let mut package_files = vec![];
     let mut package_dirs = vec![];
@@ -143,25 +153,34 @@ pub fn parse_package(packs: &Vec<String>) -> Result<(Vec<Table>, Vec<String>)> {
     Ok((packs, package_dirs))
 }
 
+pub fn action_download(packs: &Vec<String>) -> Result<()> {
+    log::info("Downloading sources");
+    download(packs, None, None, true, None)?;
+    Ok(())
+}
+
 pub fn download(
     packs: &Vec<String>,
     pack_toml: Option<&Vec<Table>>,
-    force: bool
+    pack_dirs: Option<&Vec<String>>,
+    force: bool,
+    pad: Option<usize>
 ) -> Result<Vec<Vec<String>>> {
-    log::info("Downloading sources");
-
-    let longest = packs.iter().fold(&packs[0], |acc, item| {
-        if item.len() > acc.len() { &item } else { acc }
-    });
+    let longest = match pad {
+        Some(x) => x,
+        None => packs.iter().fold(&packs[0], |acc, item| {
+            if item.len() > acc.len() { &item } else { acc }
+        }).len(),
+    };
 
     let files: Vec<Vec<String>> = if let Some(n) = pack_toml {
-        n.iter().zip(packs)
-            .map(|(x, y)| download_all(&x["meta"]["sources"], y, force, longest.len()))
+        n.iter().zip(packs).zip(pack_dirs.unwrap())
+            .map(|((x, y), z)| download_all(&x["meta"]["sources"], y, z, force, longest))
             .collect::<Result<_>>()?
     } else {
-        let pack_toml = parse_package(packs)?.0;
-        pack_toml.iter().zip(packs)
-            .map(|(x, y)| download_all(&x["meta"]["sources"], y, force, longest.len()))
+        let (pack_toml, pack_dirs) = parse_package(packs)?;
+        pack_toml.iter().zip(packs).zip(&pack_dirs)
+            .map(|((x, y), z)| download_all(&x["meta"]["sources"], y, z, force, longest))
             .collect::<Result<_>>()?
     };
 
@@ -169,7 +188,7 @@ pub fn download(
 }
 
 pub fn generate_checksums() -> Result<()> {
-    let filenames = download(&vec![".".into()], None, true)?;
+    let filenames = download(&vec![".".into()], None, None, true, None)?;
     let mut hashes = vec![];
     for file in &filenames[0] {
         let file = if file.starts_with("tar+") { &file[4..] } else { &file[..] };
@@ -191,29 +210,102 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
         if item.len() > acc.len() { &item } else { acc }
     }).len();
 
-    let deps = resolve_deps(packs, &pack_toml, 0)?;
+    let deps = resolve_deps(packs, &pack_toml, 1)?;
     let dep_names: Vec<String> = deps.iter().map(|x| x.name.clone()).collect();
     let (dep_toml, dep_dirs) = parse_package(&dep_names)?;
 
-    log::info("Building packages (explicit):");
+    let pad_dep = if dep_names.len() > 0 {
+        dep_names.iter().fold(&dep_names[0], |acc, item| {
+            if item.len() > acc.len() { &item } else { acc }
+        }).len()
+    } else {
+        0
+    };
+
+    let pad = if pad >= pad_dep { pad } else { pad_dep };
+
+    let version_pad = pack_toml.iter().fold(
+        &pack_toml[0],
+        |acc, item| {
+            let version_acc = acc["meta"]["version"].as_str().unwrap();
+            let version_item = item["meta"]["version"].as_str().unwrap();
+
+            if version_item.len() > version_acc.len() { &item } else { acc }
+        }
+    )["meta"]["version"].as_str().unwrap().len();
+
+    let version_pad_dep = if dep_names.len() > 0 {
+        pack_toml.iter().fold(
+            &pack_toml[0],
+            |acc, item| {
+                let version_acc = acc["meta"]["version"].as_str().unwrap();
+                let version_item = item["meta"]["version"].as_str().unwrap();
+
+                if version_item.len() > version_acc.len() { &item } else { acc }
+            }
+        )["meta"]["version"].as_str().unwrap().len()
+    } else {
+        0
+    };
+
+    let version_pad = if version_pad >= version_pad_dep { version_pad } else { version_pad_dep };
+    let real_pad = pad;
+
+    let name_header = format!("Package ({})", packs.len() + dep_names.len());
+    let version_header = "Version";
+
+    let pad = if pad < name_header.len() + 3 {
+        name_header.len() + 3
+    } else {
+        pad
+    };
+
+    let version_pad = if version_pad < version_header.len() + 3 {
+        version_header.len() + 3
+    } else {
+        version_pad
+    };
+
+    for (pack, toml) in packs.iter().zip(&pack_toml) {
+        if is_installed(pack, toml["meta"]["version"].as_str().unwrap())? {
+            log::warn(&format!("Package {pack} is up to date - reinstalling"));
+        }
+    }
+    
+    log::info("Building packages:\n");
+    info_fmt!("{: <pad$} {: <version_pad$}", name_header, version_header);
+    eprintln!();
+
     for (pack, toml) in packs.iter().zip(&pack_toml) {
         let version = toml["meta"]["version"].as_str().unwrap();
-        info_ident_fmt!("{: <pad$} @ {}", pack, version);
+        info_fmt!("{: <pad$} {: <version_pad$} (explicit)", pack, version);
     }
 
-    log::info("Building packages (implicit):");
     for (pack, toml) in deps.iter().zip(&dep_toml) {
         let version = toml["meta"]["version"].as_str().unwrap();
-        eprint!("{}", " ".repeat(pack.depth * 2));
-        info_ident_fmt!("{: <pad$} @ {}", pack.name, version);
+        info_fmt!("{: <pad$} {: <version_pad$} (layer {})", pack.name, version, pack.depth);
     }
 
     eprintln!();
 
     log::info("Press Enter to continue or Ctrl+C to abort");
     let _ = io::stdin().read(&mut [0u8]);
+   
+    log::info("Downloading sources");
+    let filenames = download(packs, Some(&pack_toml), Some(&pack_dirs), false, Some(real_pad))?;
+    let dep_filenames = download(&dep_names, Some(&dep_toml), Some(&dep_dirs), false, Some(real_pad))?;
 
-    build_all(packs, pack_toml, pack_dirs, pad)?;
+    log::info("Verifying checksums");
+    checksums_all(packs, &pack_toml, &pack_dirs, &filenames, real_pad)?;
+    checksums_all(&dep_names, &dep_toml, &dep_dirs, &dep_filenames, real_pad)?;
+
+    build_all(packs, &pack_toml, &pack_dirs, &filenames)?;
+
+    log::info("Installing built packages.");
+    log::info("Press Enter to continue or Ctrl+C to abort");
+    let _ = io::stdin().read(&mut [0u8]);
+    install_all(packs, &pack_toml)?;
+
     Ok(())
 
 }
@@ -248,32 +340,52 @@ pub fn resolve_deps(
     pack_toml: &Vec<Map<String, Value>>,
     depth: usize,
 ) -> Result<Vec<Package>> {
-    let mut output = vec![];
+    let mut raw_output = vec![];
     for pack in pack_toml {
         for (name, _ver_req) in pack["deps"].as_table().unwrap() {
             let res = Package { name: name.to_string(), depth };
-            output.push(res);
+            raw_output.push(res);
 
             let (dep_toml, _) = parse_package(&vec![name.to_string()])?;
             let mut deps = resolve_deps(&vec![name.to_string()], &dep_toml, depth + 1)?;
-            output.append(&mut deps);
+            raw_output.append(&mut deps);
         }
     }
 
+    let mut output: Vec<Package> = vec![];
+    'o: for i in &raw_output {
+        if is_installed(&i.name, "*")? {
+            continue 'o;
+        }
+
+        for j in &output {
+            if j.name == i.name {
+                continue 'o;
+            }
+        }
+
+        let mut pack = i.clone();
+        for j in &raw_output {
+            if j.name == pack.name && j.depth > pack.depth {
+                pack = j.clone();
+            }
+        }
+
+        output.push(pack);
+    }
+
+    output.sort_by(|a, b| a.depth.cmp(&b.depth).reverse());
     Ok(output)
 }
 
-pub fn build_all(
+pub fn checksums_all(
     packs: &Vec<String>,
-    pack_toml: Vec<Map<String, Value>>,
-    pack_dirs: Vec<String>,
+    pack_toml: &Vec<Map<String, Value>>,
+    pack_dirs: &Vec<String>,
+    filenames: &Vec<Vec<String>>,
     pad: usize
-) -> Result<()> {
-    let filenames = download(&packs, Some(&pack_toml), false)?;
-    eprintln!("\n");
-   
-    log::info("Verifying checksums");
-    for ((pack, toml), name) in filenames.iter().zip(&pack_toml).zip(packs) {
+) -> Result<()> {  
+    for ((pack, toml), name) in filenames.iter().zip(pack_toml).zip(packs) {
         if let Value::Array(x) = &toml["meta"]["checksums"] {
             verify_checksums(pack, &x, name, pad)?;
         } else {
@@ -281,10 +393,17 @@ pub fn build_all(
         }
     }
 
-    eprintln!();
+    Ok(())
+}
 
+pub fn build_all(
+    packs: &Vec<String>,
+    pack_toml: &Vec<Map<String, Value>>,
+    pack_dirs: &Vec<String>,
+    filenames: &Vec<Vec<String>>,
+) -> Result<()> {  
     for (i, (((pack, name), dir), toml)) in filenames.iter()
-        .zip(packs).zip(pack_dirs).zip(&pack_toml)
+        .zip(packs).zip(pack_dirs).zip(pack_toml)
         .enumerate()
     {
         let version = toml["meta"]["version"].as_str().unwrap();
@@ -337,7 +456,7 @@ pub fn build_all(
         info_fmt!("\x1b[36m{}\x1b[0m Generating manifest", name);
         
         let manifest_dir = format!("{dest_dir}/var/cache/arc/installed");
-        let manifest = format!("{manifest_dir}/{name}");
+        let manifest = format!("{manifest_dir}/{name}@{version}");
 
         fs::create_dir_all(&manifest_dir)
             .context(format!("Couldn't create directory {manifest_dir}"))?;
@@ -368,11 +487,6 @@ pub fn build_all(
         info_fmt!("\x1b[36m{}\x1b[0m Successfully created tarball", name);
         eprintln!();
     }
-
-    log::info("Installing built packages.");
-    log::info("Press Enter to continue or Ctrl+C to abort");
-    let _ = io::stdin().read(&mut [0u8]);
-    install_all(packs, &pack_toml)?;
  
     Ok(())
 }
@@ -431,7 +545,13 @@ pub fn install_all(packs: &Vec<String>, pack_toml: &Vec<Map<String, Value>>) -> 
     Ok(())
 }
 
-pub fn download_all(urls: &Value, name: &String, force: bool, pad: usize) -> Result<Vec<String>> {
+pub fn download_all(
+    urls: &Value,
+    name: &String,
+    repo_dir: &String,
+    force: bool,
+    pad: usize
+) -> Result<Vec<String>> {
     let mut fnames = vec![];
     if let Value::Array(x) = urls {
         let dir = format!("{}/dl", *CACHE);
@@ -452,7 +572,7 @@ pub fn download_all(urls: &Value, name: &String, force: bool, pad: usize) -> Res
             }
  
             if fs::metadata(filename.clone()).is_ok() &&! force {
-                info_fmt!("\x1b[36m{}\x1b[0m {} already downloaded, skipping", name, url);
+                info_ident_fmt!("\x1b[36m{: <pad$}\x1b[0m {} already downloaded, skipping", name, url);
                 continue;
             }
 
@@ -493,7 +613,7 @@ pub fn download_all(urls: &Value, name: &String, force: bool, pad: usize) -> Res
             } else if url.starts_with("git+") {
                 bail!("Git sources are not yet supported ({url})");
             } else {
-                fs::copy(format!("{name}/{url}"), filename)
+                fs::copy(format!("{repo_dir}/{url}"), filename)
                     .context(format!("Could not copy local file {name}/{url} to build directory"))?;
             }
         } 
