@@ -2,6 +2,7 @@ use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
+use std::path::Path;
 use std::process::{self, Command};
 
 use anyhow::{bail, Context, Result};
@@ -46,6 +47,7 @@ lazy_static! {
 #[derive(Clone, Debug)]
 pub struct Package {
     pub name: String,
+    pub ver: String,
     pub depth: usize,
 }
 
@@ -105,12 +107,7 @@ pub fn purge() -> Result<()> {
 }
 
 pub fn is_installed(pack: &String, version: &str) -> Result<bool> {
-    let mut path = if version == "*" {
-        glob(&format!("/var/cache/arc/installed/{pack}*"))?
-    } else {
-        glob(&format!("/var/cache/arc/installed/{pack}@{version}"))?
-    };
-
+    let mut path = glob(&format!("/var/cache/arc/installed/{pack}@{version}"))?;
     Ok(path.next().is_some())
 }
 
@@ -234,9 +231,9 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
         }
     )["meta"]["version"].as_str().unwrap().len();
 
-    let version_pad_dep = if dep_names.len() > 0 {
-        pack_toml.iter().fold(
-            &pack_toml[0],
+    let version_pad_dep = if dep_names.len() > 1 {
+        dep_toml.iter().fold(
+            &dep_toml[0],
             |acc, item| {
                 let version_acc = acc["meta"]["version"].as_str().unwrap();
                 let version_item = item["meta"]["version"].as_str().unwrap();
@@ -244,6 +241,8 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
                 if version_item.len() > version_acc.len() { &item } else { acc }
             }
         )["meta"]["version"].as_str().unwrap().len()
+    } else if dep_names.len() == 1 {
+        dep_toml[0]["meta"]["version"].as_str().unwrap().len()
     } else {
         0
     };
@@ -257,13 +256,13 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
     let pad = if pad < name_header.len() + 3 {
         name_header.len() + 3
     } else {
-        pad
+        pad + 3
     };
 
     let version_pad = if version_pad < version_header.len() + 3 {
         version_header.len() + 3
     } else {
-        version_pad
+        version_pad + 3
     };
 
     for (pack, toml) in packs.iter().zip(&pack_toml) {
@@ -277,6 +276,7 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
     eprintln!();
 
     for (pack, toml) in packs.iter().zip(&pack_toml) {
+        if dep_names.contains(pack) { continue; }
         let version = toml["meta"]["version"].as_str().unwrap();
         info_fmt!("{: <pad$} {: <version_pad$} (explicit)", pack, version);
     }
@@ -294,10 +294,39 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
     log::info("Downloading sources");
     let filenames = download(packs, Some(&pack_toml), Some(&pack_dirs), false, Some(real_pad))?;
     let dep_filenames = download(&dep_names, Some(&dep_toml), Some(&dep_dirs), false, Some(real_pad))?;
+    eprintln!();
 
     log::info("Verifying checksums");
     checksums_all(packs, &pack_toml, &pack_dirs, &filenames, real_pad)?;
     checksums_all(&dep_names, &dep_toml, &dep_dirs, &dep_filenames, real_pad)?;
+    eprintln!();
+
+    if deps.len() > 0 {
+        let mut layer_idxs = vec![];
+        let mut depth = deps[0].depth;
+        let mut prev_idx = 0;
+        for (i, pack) in deps.iter().enumerate() {
+            if pack.depth < depth {
+                layer_idxs.push((prev_idx, i));
+                depth = pack.depth;
+                prev_idx = i;
+            }
+        }
+
+        layer_idxs.push((prev_idx, deps.len()));
+
+        for idx in &layer_idxs {
+            build_all(
+                &dep_names[idx.0..idx.1].to_vec(),
+                &dep_toml[idx.0..idx.1].to_vec(),
+                &dep_dirs[idx.0..idx.1].to_vec(),
+                &dep_filenames[idx.0..idx.1].to_vec()
+            )?;
+
+            info_fmt!("Installing layer {} dependencies", deps[idx.0].depth);
+            install_all(&dep_names[idx.0..idx.1].to_vec(), &dep_toml[idx.0..idx.1].to_vec())?;
+        }
+    }
 
     build_all(packs, &pack_toml, &pack_dirs, &filenames)?;
 
@@ -341,9 +370,9 @@ pub fn resolve_deps(
     depth: usize,
 ) -> Result<Vec<Package>> {
     let mut raw_output = vec![];
-    for pack in pack_toml {
-        for (name, _ver_req) in pack["deps"].as_table().unwrap() {
-            let res = Package { name: name.to_string(), depth };
+    for (pack, toml) in packs.iter().zip(pack_toml) {
+        for (name, ver_req) in toml["deps"].as_table().unwrap() {
+            let res = Package { name: name.to_string(), ver: ver_req.to_string(), depth };
             raw_output.push(res);
 
             let (dep_toml, _) = parse_package(&vec![name.to_string()])?;
@@ -354,7 +383,7 @@ pub fn resolve_deps(
 
     let mut output: Vec<Package> = vec![];
     'o: for i in &raw_output {
-        if is_installed(&i.name, "*")? {
+        if is_installed(&i.name, &i.ver)? {
             continue 'o;
         }
 
@@ -434,18 +463,20 @@ pub fn build_all(
             }
         }
 
-        info_fmt!("\x1b[36m{}\x1b[0m Running build script\n", name);
+        info_fmt!("\x1b[36m{}\x1b[0m Running build script", name);
 
         let build_script = fs::canonicalize(format!("{dir}/build"))
             .context(format!("Couldn't canonicalize path {dir}/build"))?;
 
+        let log_file = File::create(format!("{dest_dir}/../log.txt"))?;
         let build_status = Command::new(build_script)
             .arg(&dest_dir)
+            .arg(&version)
             .current_dir(src_dir)
+            .stdout(log_file.try_clone()?)
+            .stderr(log_file)
             .status()
             .context(format!("Couldn't execute {dir}/build"))?;
-
-        eprintln!();
 
         if build_status.success() {
             info_fmt!("\x1b[36m{}\x1b[0m Successfully built package", name);
@@ -484,7 +515,6 @@ pub fn build_all(
             .status()
             .context("Couldn't create tarball of built package")?;
 
-        info_fmt!("\x1b[36m{}\x1b[0m Successfully created tarball", name);
         eprintln!();
     }
  
@@ -592,6 +622,7 @@ pub fn download_all(
 
                     if res.status_code().is_success() {
                         bar.finish();
+                        eprintln!();
                         let mut out = File::create(&filename).context(format!("Couldn't create file {filename}"))?;
                         out.write_all(&body)
                             .context(format!("Couldn't save downloaded file to {filename}"))?;
@@ -640,10 +671,11 @@ pub fn verify_checksums(
         let hash = blake3::hash(&data);
 
         info_ident_fmt!(
-            "\x1b[36m{: <pad$}\x1b[0m {} / {}",
+            "\x1b[36m{: <pad$}\x1b[0m {} / {} ({})",
             pack,
             &sum.as_str().unwrap()[..10],
-            &hash.to_string()[..10]
+            &hash.to_string()[..10],
+            Path::new(file).file_name().unwrap().to_str().unwrap(),
         );
 
         if hash.to_string() != sum.to_string().replace("\"", "") {
