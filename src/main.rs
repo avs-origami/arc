@@ -6,6 +6,7 @@ use anyhow::Context;
 mod args;
 mod actions;
 mod log;
+mod util;
 
 use args::Op;
 
@@ -19,9 +20,15 @@ fn main() {
         }
     }
 
-    let cli_args: Vec<String> = env::args().collect();
-    let status = match args::parse(&cli_args) {
-        Op::Build(x) => actions::build(&x),
+    let mut cli_args: Vec<String> = env::args().collect();
+    let parsed = args::parse(&mut cli_args);
+
+    if parsed.sync {
+        log::warn("sync is not implemented yet");
+    }
+
+    let status = match parsed.kind {
+        Op::Build(x) => actions::build(&x, parsed.verbose),
         Op::Checksum => actions::generate_checksums(),
         Op::Die(x) => actions::print_help(x),
         Op::Download(x) => actions::action_download(&x),

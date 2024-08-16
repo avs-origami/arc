@@ -3,7 +3,8 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
-use std::process::{self, Command};
+use std::process::{self, Command, Stdio};
+use std::thread;
 
 use anyhow::{bail, Context, Result};
 use glob::glob;
@@ -15,6 +16,7 @@ use toml::{Table, Value};
 use toml::map::Map;
 
 use crate::log;
+use crate::util;
 use crate::{info_fmt, info_ident_fmt};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -83,7 +85,7 @@ pub fn version() -> ! {
 
 pub fn new(name: String) -> Result<()> {
     fs::create_dir(&name).context(format!("Failed to create directory {name}"))?;
-    
+
     let mut package = File::create(format!("{name}/package.toml"))
         .context(format!("Failed to create {name}/package.toml"))?;
 
@@ -200,7 +202,7 @@ pub fn generate_checksums() -> Result<()> {
     Ok(())
 }
 
-pub fn build(packs: &Vec<String>) -> Result<()> {
+pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
     let (pack_toml, pack_dirs) = parse_package(&packs)?;
 
     let pad = packs.iter().fold(&packs[0], |acc, item| {
@@ -270,7 +272,7 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
             log::warn(&format!("Package {pack} is up to date - reinstalling"));
         }
     }
-    
+
     log::info("Building packages:\n");
     info_fmt!("{: <pad$} {: <version_pad$}", name_header, version_header);
     eprintln!();
@@ -290,7 +292,7 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
 
     log::info("Press Enter to continue or Ctrl+C to abort");
     let _ = io::stdin().read(&mut [0u8]);
-   
+
     log::info("Downloading sources");
     let filenames = download(packs, Some(&pack_toml), Some(&pack_dirs), false, Some(real_pad))?;
     let dep_filenames = download(&dep_names, Some(&dep_toml), Some(&dep_dirs), false, Some(real_pad))?;
@@ -320,7 +322,8 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
                 &dep_names[idx.0..idx.1].to_vec(),
                 &dep_toml[idx.0..idx.1].to_vec(),
                 &dep_dirs[idx.0..idx.1].to_vec(),
-                &dep_filenames[idx.0..idx.1].to_vec()
+                &dep_filenames[idx.0..idx.1].to_vec(),
+                verbose,
             )?;
 
             info_fmt!("Installing layer {} dependencies", deps[idx.0].depth);
@@ -328,7 +331,7 @@ pub fn build(packs: &Vec<String>) -> Result<()> {
         }
     }
 
-    build_all(packs, &pack_toml, &pack_dirs, &filenames)?;
+    build_all(packs, &pack_toml, &pack_dirs, &filenames, verbose)?;
 
     log::info("Installing built packages.");
     log::info("Press Enter to continue or Ctrl+C to abort");
@@ -413,7 +416,7 @@ pub fn checksums_all(
     pack_dirs: &Vec<String>,
     filenames: &Vec<Vec<String>>,
     pad: usize
-) -> Result<()> {  
+) -> Result<()> {
     for ((pack, toml), name) in filenames.iter().zip(pack_toml).zip(packs) {
         if let Value::Array(x) = &toml["meta"]["checksums"] {
             verify_checksums(pack, &x, name, pad)?;
@@ -430,7 +433,8 @@ pub fn build_all(
     pack_toml: &Vec<Map<String, Value>>,
     pack_dirs: &Vec<String>,
     filenames: &Vec<Vec<String>>,
-) -> Result<()> {  
+    verbose: bool,
+) -> Result<()> {
     for (i, (((pack, name), dir), toml)) in filenames.iter()
         .zip(packs).zip(pack_dirs).zip(pack_toml)
         .enumerate()
@@ -464,19 +468,40 @@ pub fn build_all(
         }
 
         info_fmt!("\x1b[36m{}\x1b[0m Running build script", name);
+        if verbose { eprintln!(); }
 
         let build_script = fs::canonicalize(format!("{dir}/build"))
             .context(format!("Couldn't canonicalize path {dir}/build"))?;
 
         let log_file = File::create(format!("{dest_dir}/../log.txt"))?;
-        let build_status = Command::new(build_script)
-            .arg(&dest_dir)
-            .arg(&version)
-            .current_dir(src_dir)
-            .stdout(log_file.try_clone()?)
-            .stderr(log_file)
-            .status()
-            .context(format!("Couldn't execute {dir}/build"))?;
+        let mut build_cmd = Command::new(build_script);
+        build_cmd.arg(&dest_dir).arg(&version).current_dir(src_dir);
+
+        let build_status = if !verbose {
+            build_cmd.stdout(log_file.try_clone()?).stderr(log_file.try_clone()?);
+            build_cmd.status().context(format!("Couldn't execute {dir}/build"))?
+        } else {
+            build_cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+            let mut child = build_cmd.spawn().context(format!("Couldn't execute {dir}/build"))?;
+            let child_out = child.stdout.take().context(format!("Couldn't take stdout of child {dir}/build"))?;
+            let child_err = child.stderr.take().context(format!("Couldn't take stderr of child {dir}/build"))?;
+
+            let mut log_out = log_file.try_clone()?;
+            let thread_out = thread::spawn(move || {
+                util::tee(child_out, &mut log_out, io::stdout()).expect(&format!("Couldn't tee output of build"));
+            });
+
+            let mut log_err = log_file.try_clone()?;
+            let thread_err = thread::spawn(move || {
+                util::tee(child_err, &mut log_err, io::stdout()).expect(&format!("Couldn't tee output of build"));
+            });
+
+            thread_out.join().unwrap();
+            thread_err.join().unwrap();
+            child.wait().context(format!("Couldn't wait on child process {dir}/build"))?
+        };
+
+        if verbose { eprintln!(); }
 
         if build_status.success() {
             info_fmt!("\x1b[36m{}\x1b[0m Successfully built package", name);
@@ -485,7 +510,7 @@ pub fn build_all(
         }
 
         info_fmt!("\x1b[36m{}\x1b[0m Generating manifest", name);
-        
+
         let manifest_dir = format!("{dest_dir}/var/cache/arc/installed");
         let manifest = format!("{manifest_dir}/{name}@{version}");
 
@@ -517,7 +542,7 @@ pub fn build_all(
 
         eprintln!();
     }
- 
+
     Ok(())
 }
 
@@ -590,7 +615,7 @@ pub fn download_all(
         for (i, url) in x.iter().enumerate() {
             let og_url = url.to_string().replace("\"", "");
             let mut url = url.to_string().replace("\"", "");
-            
+
             let filename = url.split('/').last().unwrap().to_owned();
             let filename = format!("{dir}/{filename}");
 
@@ -600,7 +625,7 @@ pub fn download_all(
             } else {
                 fnames.push(filename.clone());
             }
- 
+
             if fs::metadata(filename.clone()).is_ok() &&! force {
                 info_ident_fmt!("\x1b[36m{: <pad$}\x1b[0m {} already downloaded, skipping", name, url);
                 continue;
@@ -630,7 +655,7 @@ pub fn download_all(
                         break;
                     } else if res.status_code().is_redirect() {
                         bar.finish_and_clear();
-                        url = res.headers().get("Location").unwrap().to_owned();                    
+                        url = res.headers().get("Location").unwrap().to_owned();
                     } else {
                         bar.finish_and_clear();
                         bail!(
@@ -639,7 +664,7 @@ pub fn download_all(
                             res.reason()
                         );
                     }
-                    
+
                 }
             } else if url.starts_with("git+") {
                 bail!("Git sources are not yet supported ({url})");
@@ -647,7 +672,7 @@ pub fn download_all(
                 fs::copy(format!("{repo_dir}/{url}"), filename)
                     .context(format!("Could not copy local file {name}/{url} to build directory"))?;
             }
-        } 
+        }
     } else {
         bail!("Problem parsing {name}/package.toml: sources is not an array");
     }

@@ -31,6 +31,7 @@ This is a list of all planned features and their implementation status.
     [x] Build packages and install to destdir
     [x] Install built packages to sysroot
     [x] Remove installed packages
+    [x] Build log file
 
 [-] Package repositories
     [x] Package format
@@ -44,6 +45,7 @@ This is a list of all planned features and their implementation status.
     [x] Error reporting
     [x] Progress messages
     [x] Download progress bar
+    [x] Optional verbose builds
 
 Key:
 
