@@ -3,15 +3,11 @@ use std::fs;
 
 use anyhow::Context;
 
-mod args;
-mod actions;
-mod log;
-mod util;
-
-use args::Op;
+use arc::log;
+use arc::args::{self, Op};
 
 fn main() {
-    match fs::create_dir_all((*actions::CACHE).clone())
+    match fs::create_dir_all((*arc::CACHE).clone())
         .context("Failed to create cache dir $HOME/.cache/arc")
     {
         Ok(_) => (),
@@ -28,15 +24,15 @@ fn main() {
     }
 
     let status = match parsed.kind {
-        Op::Build(x) => actions::build(&x, parsed.verbose),
-        Op::Checksum => actions::generate_checksums(),
-        Op::Die(x) => actions::print_help(x),
-        Op::Download(x) => actions::action_download(&x),
-        Op::Install(x) => actions::install(&x),
-        Op::New(x) => actions::new(x),
-        Op::Purge => actions::purge(),
-        Op::Remove(x) => actions::remove(&x),
-        Op::Version => actions::version(),
+        Op::Build(x) => arc::build(&x, parsed.verbose),
+        Op::Checksum => arc::generate_checksums(),
+        Op::Die(x) => arc::print_help(x),
+        Op::Download(x) => arc::download(&x),
+        Op::Install(x) => arc::install(&x),
+        Op::New(x) => arc::new(x),
+        Op::Purge => arc::purge_cache(),
+        Op::Remove(x) => arc::remove(&x),
+        Op::Version => arc::version(),
     };
 
     match status {

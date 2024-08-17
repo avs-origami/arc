@@ -1,3 +1,4 @@
+use std::io::{self, Read};
 use std::process::exit;
 
 pub fn log(msg: &str, color: usize) {
@@ -23,6 +24,11 @@ pub fn warn(msg: &str) {
 pub fn die(msg: &str) -> ! {
     log(&format!("ERROR: {msg}"), 31);
     exit(1)
+}
+
+pub fn prompt() {
+    info("Press Enter to continue or Ctrl+C to abort");
+    let _ = io::stdin().read(&mut [0u8]);
 }
 
 #[macro_export]
