@@ -1,3 +1,6 @@
+//! This module contains the main commands that can be directly called by the
+//! user through command line arguments.
+
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
@@ -38,6 +41,7 @@ checksums = []
 [mkdeps]
 ";
 
+/// Print out a pretty help message and terminate with a given exit code.
 pub fn print_help(code: i32) -> ! {
     eprintln!();
     eprintln!("    \x1b[35m.---.");
@@ -63,19 +67,30 @@ pub fn print_help(code: i32) -> ! {
     process::exit(code)
 }
 
+/// Print out the version and exit.
 pub fn version() -> ! {
     log::info(&format!("Arc package manager version {VERSION}"));
     process::exit(0)
 }
 
+/// Create an empty package template in the current directory. Creates the
+/// following directory structure:
+///
+/// <name>
+/// |--- package.toml
+/// '--- build (executable)
+///
 pub fn new(name: String) -> Result<()> {
+    // Create the package directory, which will contain 'package.toml' and 'build'.
     fs::create_dir(&name).context(format!("Failed to create directory {name}"))?;
 
+    // Create 'package.toml' and write the pagkage template to it.
     let mut package = File::create(format!("{name}/package.toml"))
         .context(format!("Failed to create {name}/package.toml"))?;
 
     package.write_all(PKG_TEMPLATE).context(format!("Failed to write to {name}/package.toml"))?;
 
+    // Create 'build' with permissions 0755 and add the shebang.
     let mut build = OpenOptions::new()
         .write(true)
         .create(true)
@@ -85,47 +100,74 @@ pub fn new(name: String) -> Result<()> {
 
     build.write_all(b"#!/bin/sh -e\n").context(format!("Failed to write to {name}/build"))?;
 
+    info_fmt!("Created new package {}", name);
     Ok(())
 }
 
+/// Completely remove the cache directory to free up space.
 pub fn purge_cache() -> Result<()> {
     fs::remove_dir_all((*CACHE).clone())?;
     Ok(())
 }
 
+/// Download the source files for some packages, even if they already exist.
 pub fn download(packs: &Vec<String>) -> Result<()> {
     log::info("Downloading sources");
     actions::download_all(packs, None, None, true, None)?;
     Ok(())
 }
 
+/// Generate checksums for the package defined by the current directory. Will
+/// download the source files even if they already exist.
 pub fn generate_checksums() -> Result<()> {
+    // Download the source files and get the path to each one.
     let filenames = actions::download_all(&vec![".".into()], None, None, true, None)?;
     let mut hashes = vec![];
     for file in &filenames[0] {
-        let file = if file.starts_with("tar+") { &file[4..] } else { &file[..] };
+        // Remove any prefixes from the file name.
+        let file = if &file[3..4] == "+" { &file[4..] } else { &file[..] };
+        // Calculate the b3sum for the file and add it to the list of hashes.
         let data: Vec<u8> = fs::read(file).context("Failed to read source file")?;
         let hash = blake3::hash(&data);
         hashes.push(hash.to_string());
     }
 
+    // Pretty-print the hashes, conveniently putting them in toml format.
     eprintln!("Add the following to package.toml under [meta]:");
     println!("checksums = {hashes:#?}");
 
     Ok(())
 }
 
+/// Build some packages. This does the following steps:
+/// 1. Resolve dependencies of each package, and determine which layer
+///    to install each.
+/// 2. Display a summary of all packages to be installed, and prompt to either
+///    continue or abort.
+/// 3. Download the source files for all packages to be installed, if they do
+///    not already exist in the cache directory.
+/// 4. Verify checksums for all the downloaded sources.
+/// 5. For each layer, starting at the highest layer (biggest number) and
+///    working down to the lowest layer (smallest number):
+///      - Build all packages in that layer
+///      - Install all packages in that layer
+/// 6. Build all remaining explicit packages.
+/// 7. Prompt to install remaining explicit packages.
 pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
+    // Parse all explicit packages, getting package.toml and the path for each.
     let (pack_toml, pack_dirs) = actions::parse_package(&packs)?;
 
+    // Get the length of the longest package name.
     let pad = packs.iter().fold(&packs[0], |acc, item| {
         if item.len() > acc.len() { &item } else { acc }
     }).len();
 
+    // Resolve all dependencies, getting package.toml and the path for each.
     let deps = actions::resolve_deps(packs, &pack_toml, 1)?;
     let dep_names: Vec<String> = deps.iter().map(|x| x.name.clone()).collect();
     let (dep_toml, dep_dirs) = actions::parse_package(&dep_names)?;
 
+    // Get the length of the longest dependency name.
     let pad_dep = if dep_names.len() > 0 {
         dep_names.iter().fold(&dep_names[0], |acc, item| {
             if item.len() > acc.len() { &item } else { acc }
@@ -134,8 +176,10 @@ pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
         0
     };
 
+    // Get the length of the longest package / dependency name.
     let pad = if pad >= pad_dep { pad } else { pad_dep };
 
+    // Determine the length of the longest version string.
     let version_pad = pack_toml.iter().fold(
         &pack_toml[0],
         |acc, item| {
@@ -165,6 +209,9 @@ pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
     let version_pad = if version_pad >= version_pad_dep { version_pad } else { version_pad_dep };
     let real_pad = pad;
 
+    // Still calculating padding: compare the previous name and version lengths
+    // to the lengths of the name and version headings, and pick the longest
+    // one. This lets us display package names and versions in a neat table.
     let name_header = format!("Package ({})", packs.len() + dep_names.len());
     let version_header = "Version";
 
@@ -180,12 +227,15 @@ pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
         version_pad + 3
     };
 
+    // If any explicit packages are already installed and the latest version,
+    // warn that we are reinstalling.
     for (pack, toml) in packs.iter().zip(&pack_toml) {
         if actions::is_installed(pack, toml["meta"]["version"].as_str().unwrap())? {
             log::warn(&format!("Package {pack} is up to date - reinstalling"));
         }
     }
 
+    // Output the table of package names and versions, with a confirmation prompt.
     log::info("Building packages:\n");
     info_fmt!("{: <pad$} {: <version_pad$}", name_header, version_header);
     eprintln!();
@@ -205,17 +255,23 @@ pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
 
     log::prompt();
 
+    // Download all source files.
     log::info("Downloading sources");
     let filenames = actions::download_all(packs, Some(&pack_toml), Some(&pack_dirs), false, Some(real_pad))?;
     let dep_filenames = actions::download_all(&dep_names, Some(&dep_toml), Some(&dep_dirs), false, Some(real_pad))?;
     eprintln!();
 
+    // Verify checksums for all the source files.
     log::info("Verifying checksums");
     actions::checksums_all(packs, &pack_toml, &pack_dirs, &filenames, real_pad)?;
     actions::checksums_all(&dep_names, &dep_toml, &dep_dirs, &dep_filenames, real_pad)?;
     eprintln!();
 
+    // If we have any dependencies, build and install them first.
     if deps.len() > 0 {
+        // All the dependency data is sorted by layer. Determine on which
+        // indices the data must be split to separate the packages based
+        // on layer.
         let mut layer_idxs = vec![];
         let mut depth = deps[0].depth;
         let mut prev_idx = 0;
@@ -229,6 +285,7 @@ pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
 
         layer_idxs.push((prev_idx, deps.len()));
 
+        // Build and install the dependencies, one layer at a time.
         for idx in &layer_idxs {
             actions::build_all(
                 &dep_names[idx.0..idx.1].to_vec(),
@@ -243,8 +300,11 @@ pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
         }
     }
 
+    // Build all remaining explicit packages.
     actions::build_all(packs, &pack_toml, &pack_dirs, &filenames, verbose)?;
 
+    // Prompt the user, asking whether to install the remaining explicit
+    // packages that were just build.
     log::info("Installing built packages.");
     log::prompt();
     actions::install_all(packs, &pack_toml)?;
@@ -252,17 +312,24 @@ pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
     Ok(())
 }
 
+/// Install some packages for which a complete binary tarball is present in the
+/// cache directory.
 pub fn install(packs: &Vec<String>) -> Result<()> {
     let (pack_toml, _) = actions::parse_package(&packs)?;
     actions::install_all(packs, &pack_toml)?;
     Ok(())
 }
 
+/// Uninstall some packages by removing the files listed in each package's
+/// manifest.
 pub fn remove(packs: &Vec<String>) -> Result<()> {
     for pack in packs {
+        // Read the package manifest.
         let manifest = fs::read_to_string(format!("/var/cache/arc/installed/{pack}"))
             .context(format!("Couldn't read package manifest at /var/cache/arc/installed/{pack}"))?;
 
+        // Since the manifest was generated using a glob, we iterate through
+        // the lines in reverse to remove the deepest files first.
         for file in manifest.lines().rev() {
             let real_path = fs::canonicalize(file)?;
             if fs::metadata(&real_path)?.is_dir() {

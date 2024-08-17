@@ -1,3 +1,5 @@
+//! This module contains some miscellaneous utility functions.
+
 use std::fs::File;
 use std::io::{Read, Write};
 

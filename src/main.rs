@@ -7,6 +7,8 @@ use arc::log;
 use arc::args::{self, Op};
 
 fn main() {
+    // Create the cache directory, if it doesn't exist. This is where source
+    // files, builds, and logs are stored.
     match fs::create_dir_all((*arc::CACHE).clone())
         .context("Failed to create cache dir $HOME/.cache/arc")
     {
@@ -16,6 +18,7 @@ fn main() {
         }
     }
 
+    // Collect and parse CLI arguments.
     let mut cli_args: Vec<String> = env::args().collect();
     let parsed = args::parse(&mut cli_args);
 
@@ -23,6 +26,9 @@ fn main() {
         log::warn("sync is not implemented yet");
     }
 
+    // Match the given command, and execute the appropriate action, storing
+    // the result. All commands return a Result<()> which allows for nice
+    // error handling.
     let status = match parsed.kind {
         Op::Build(x) => arc::build(&x, parsed.verbose),
         Op::Checksum => arc::generate_checksums(),
@@ -35,6 +41,7 @@ fn main() {
         Op::Version => arc::version(),
     };
 
+    // Report any errors with nice formatting.
     match status {
         Ok(_) => (),
         Err(e) => {

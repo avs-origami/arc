@@ -1,3 +1,5 @@
+//! This module contains logic to parse command line arguments.
+
 #[derive(Debug)]
 pub enum Op {
     Build(Vec<String>),
@@ -18,6 +20,7 @@ pub struct Cmd {
     pub verbose: bool,
 }
 
+/// Parse command line arguments.
 pub fn parse(args: &mut Vec<String>) -> Cmd {
     if args.len() > 1 {
         let mut sync = false;
@@ -66,7 +69,7 @@ pub fn parse(args: &mut Vec<String>) -> Cmd {
                     break Op::Die(1);
                 }
             },
-            "p" | "purge" => break Op::Purge, 
+            "p" | "purge" => break Op::Purge,
             "version" => break Op::Version,
             "h" | "help" => break Op::Die(0),
             x => {

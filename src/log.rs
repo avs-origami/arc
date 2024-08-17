@@ -1,3 +1,6 @@
+//! This module contains functions to log messages to the terminal with
+//! consistent formatting.
+
 use std::io::{self, Read};
 use std::process::exit;
 
