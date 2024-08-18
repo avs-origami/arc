@@ -113,7 +113,7 @@ pub fn purge_cache() -> Result<()> {
 /// Download the source files for some packages, even if they already exist.
 pub fn download(packs: &Vec<String>) -> Result<()> {
     log::info("Downloading sources");
-    actions::download_all(packs, None, None, true, None)?;
+    actions::download_all(packs, None, true, None)?;
     Ok(())
 }
 
@@ -121,9 +121,9 @@ pub fn download(packs: &Vec<String>) -> Result<()> {
 /// download the source files even if they already exist.
 pub fn generate_checksums() -> Result<()> {
     // Download the source files and get the path to each one.
-    let filenames = actions::download_all(&vec![".".into()], None, None, true, None)?;
+    let pack = actions::download_all(&vec![".".into()], None, true, None)?;
     let mut hashes = vec![];
-    for file in &filenames[0] {
+    for file in &pack[0].sources {
         // Remove any prefixes from the file name.
         let file = if &file[3..4] == "+" { &file[4..] } else { &file[..] };
         // Calculate the b3sum for the file and add it to the list of hashes.
@@ -132,7 +132,7 @@ pub fn generate_checksums() -> Result<()> {
         hashes.push(hash.to_string());
     }
 
-    // Pretty-print the hashes, conveniently putting them in toml format.
+    // Pretty-print the hashes, conveniently putting them in TOML format.
     eprintln!("Add the following to package.toml under [meta]:");
     println!("checksums = {hashes:#?}");
 
@@ -154,8 +154,8 @@ pub fn generate_checksums() -> Result<()> {
 /// 6. Build all remaining explicit packages.
 /// 7. Prompt to install remaining explicit packages.
 pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
-    // Parse all explicit packages, getting package.toml and the path for each.
-    let (pack_toml, pack_dirs) = actions::parse_package(&packs)?;
+    // Parse all explicit packages, getting package TOML and the path for each.
+    let pack_toml = actions::parse_package(&packs)?;
 
     // Get the length of the longest package name.
     let pad = packs.iter().fold(&packs[0], |acc, item| {
@@ -163,9 +163,8 @@ pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
     }).len();
 
     // Resolve all dependencies, getting package.toml and the path for each.
-    let deps = actions::resolve_deps(packs, &pack_toml, 1)?;
-    let dep_names: Vec<String> = deps.iter().map(|x| x.name.clone()).collect();
-    let (dep_toml, dep_dirs) = actions::parse_package(&dep_names)?;
+    let dep_toml = actions::resolve_deps(&pack_toml, 1)?;
+    let dep_names: Vec<String> = dep_toml.iter().map(|x| x.name.clone()).collect();
 
     // Get the length of the longest dependency name.
     let pad_dep = if dep_names.len() > 0 {
@@ -183,25 +182,25 @@ pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
     let version_pad = pack_toml.iter().fold(
         &pack_toml[0],
         |acc, item| {
-            let version_acc = acc["meta"]["version"].as_str().unwrap();
-            let version_item = item["meta"]["version"].as_str().unwrap();
+            let version_acc = &acc.meta.version;
+            let version_item = &item.meta.version;
 
             if version_item.len() > version_acc.len() { &item } else { acc }
         }
-    )["meta"]["version"].as_str().unwrap().len();
+    ).meta.version.len();
 
     let version_pad_dep = if dep_names.len() > 1 {
         dep_toml.iter().fold(
             &dep_toml[0],
             |acc, item| {
-                let version_acc = acc["meta"]["version"].as_str().unwrap();
-                let version_item = item["meta"]["version"].as_str().unwrap();
+                let version_acc = &acc.meta.version;
+                let version_item = &item.meta.version;
 
                 if version_item.len() > version_acc.len() { &item } else { acc }
             }
-        )["meta"]["version"].as_str().unwrap().len()
+        ).meta.version.len()
     } else if dep_names.len() == 1 {
-        dep_toml[0]["meta"]["version"].as_str().unwrap().len()
+        dep_toml[0].meta.version.len()
     } else {
         0
     };
@@ -229,9 +228,9 @@ pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
 
     // If any explicit packages are already installed and the latest version,
     // warn that we are reinstalling.
-    for (pack, toml) in packs.iter().zip(&pack_toml) {
-        if actions::is_installed(pack, toml["meta"]["version"].as_str().unwrap())? {
-            log::warn(&format!("Package {pack} is up to date - reinstalling"));
+    for toml in &pack_toml {
+        if actions::is_installed(&toml.name, &toml.meta.version)? {
+            log::warn(&format!("Package {} is up to date - reinstalling", &toml.name));
         }
     }
 
@@ -240,15 +239,13 @@ pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
     info_fmt!("{: <pad$} {: <version_pad$}", name_header, version_header);
     eprintln!();
 
-    for (pack, toml) in packs.iter().zip(&pack_toml) {
-        if dep_names.contains(pack) { continue; }
-        let version = toml["meta"]["version"].as_str().unwrap();
-        info_fmt!("{: <pad$} {: <version_pad$} (explicit)", pack, version);
+    for toml in &pack_toml {
+        if dep_names.contains(&toml.name) { continue; }
+        info_fmt!("{: <pad$} {: <version_pad$} (explicit)", toml.name, toml.meta.version);
     }
 
-    for (pack, toml) in deps.iter().zip(&dep_toml) {
-        let version = toml["meta"]["version"].as_str().unwrap();
-        info_fmt!("{: <pad$} {: <version_pad$} (layer {})", pack.name, version, pack.depth);
+    for toml in &dep_toml {
+        info_fmt!("{: <pad$} {: <version_pad$} (layer {})", toml.name, toml.meta.version, toml.depth);
     }
 
     eprintln!();
@@ -257,25 +254,25 @@ pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
 
     // Download all source files.
     log::info("Downloading sources");
-    let filenames = actions::download_all(packs, Some(&pack_toml), Some(&pack_dirs), false, Some(real_pad))?;
-    let dep_filenames = actions::download_all(&dep_names, Some(&dep_toml), Some(&dep_dirs), false, Some(real_pad))?;
+    let pack_toml = actions::download_all(packs, Some(pack_toml), false, Some(real_pad))?;
+    let dep_toml = actions::download_all(&dep_names, Some(dep_toml), false, Some(real_pad))?;
     eprintln!();
 
     // Verify checksums for all the source files.
     log::info("Verifying checksums");
-    actions::checksums_all(packs, &pack_toml, &pack_dirs, &filenames, real_pad)?;
-    actions::checksums_all(&dep_names, &dep_toml, &dep_dirs, &dep_filenames, real_pad)?;
+    actions::checksums_all(&pack_toml, real_pad)?;
+    actions::checksums_all(&dep_toml, real_pad)?;
     eprintln!();
 
     // If we have any dependencies, build and install them first.
-    if deps.len() > 0 {
+    if dep_toml.len() > 0 {
         // All the dependency data is sorted by layer. Determine on which
         // indices the data must be split to separate the packages based
         // on layer.
         let mut layer_idxs = vec![];
-        let mut depth = deps[0].depth;
+        let mut depth = dep_toml[0].depth;
         let mut prev_idx = 0;
-        for (i, pack) in deps.iter().enumerate() {
+        for (i, pack) in dep_toml.iter().enumerate() {
             if pack.depth < depth {
                 layer_idxs.push((prev_idx, i));
                 depth = pack.depth;
@@ -283,31 +280,29 @@ pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
             }
         }
 
-        layer_idxs.push((prev_idx, deps.len()));
+        layer_idxs.push((prev_idx, dep_toml.len()));
 
         // Build and install the dependencies, one layer at a time.
         for idx in &layer_idxs {
             actions::build_all(
-                &dep_names[idx.0..idx.1].to_vec(),
                 &dep_toml[idx.0..idx.1].to_vec(),
-                &dep_dirs[idx.0..idx.1].to_vec(),
-                &dep_filenames[idx.0..idx.1].to_vec(),
                 verbose,
             )?;
 
-            info_fmt!("Installing layer {} dependencies", deps[idx.0].depth);
-            actions::install_all(&dep_names[idx.0..idx.1].to_vec(), &dep_toml[idx.0..idx.1].to_vec())?;
+            info_fmt!("Installing layer {} dependencies", dep_toml[idx.0].depth);
+            actions::install_all(&dep_toml[idx.0..idx.1].to_vec())?;
+            eprintln!();
         }
     }
 
     // Build all remaining explicit packages.
-    actions::build_all(packs, &pack_toml, &pack_dirs, &filenames, verbose)?;
+    actions::build_all(&pack_toml, verbose)?;
 
     // Prompt the user, asking whether to install the remaining explicit
     // packages that were just build.
     log::info("Installing built packages.");
     log::prompt();
-    actions::install_all(packs, &pack_toml)?;
+    actions::install_all(&pack_toml)?;
 
     Ok(())
 }
@@ -315,8 +310,8 @@ pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
 /// Install some packages for which a complete binary tarball is present in the
 /// cache directory.
 pub fn install(packs: &Vec<String>) -> Result<()> {
-    let (pack_toml, _) = actions::parse_package(&packs)?;
-    actions::install_all(packs, &pack_toml)?;
+    let pack_toml = actions::parse_package(&packs)?;
+    actions::install_all(&pack_toml)?;
     Ok(())
 }
 

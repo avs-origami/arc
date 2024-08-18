@@ -28,6 +28,7 @@ dependencies = [
  "indicatif",
  "lazy_static",
  "nix",
+ "serde",
  "toml",
 ]
 

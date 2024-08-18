@@ -1,6 +1,7 @@
 //! This module contains logic that is used by functions in lib.rs but cannot
 //! be directly called by the user.
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
@@ -12,40 +13,55 @@ use glob::glob;
 use http_req::request;
 use indicatif::{ProgressBar, ProgressStyle};
 use nix::unistd::Uid;
-use toml::{Table, Value};
-use toml::map::Map;
+use serde::Deserialize;
 
 use crate::{info_fmt, info_ident_fmt, ARC_PATH, CACHE};
 use crate::log;
 use crate::util;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Package {
+    pub meta: PackMeta,
+    pub deps: HashMap<String, String>,
+    pub mkdeps: HashMap<String, String>,
+    #[serde(skip)]
     pub name: String,
-    pub ver: String,
+    #[serde(skip)]
     pub depth: usize,
+    #[serde(skip)]
+    pub dir: String,
+    #[serde(skip)]
+    pub sources: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct PackMeta {
+    pub version: String,
+    pub maintainer: String,
+    pub sources: Vec<String>,
+    pub checksums: Vec<String>,
 }
 
 /// Check if a specific version of a package is installed.
-pub fn is_installed(pack: &String, version: &str) -> Result<bool> {
+pub fn is_installed(pack: &String, version: &String) -> Result<bool> {
     let mut path = glob(&format!("/var/cache/arc/installed/{pack}@{version}"))?;
     Ok(path.next().is_some())
 }
 
 /// Given a vector of package names, parse and return the toml data and the
 /// path for each, checking both absolute paths and $ARC_PATH for packages.
-pub fn parse_package(packs: &Vec<String>) -> Result<(Vec<Table>, Vec<String>)> {
-    let mut package_files = vec![];
-    let mut package_dirs = vec![];
-
+pub fn parse_package(packs: &Vec<String>) -> Result<Vec<Package>> {
+    let mut res = vec![];
     for pack in packs {
         if fs::metadata(format!("{pack}/package.toml")).is_ok() {
             // An absolute or relative path to the package was provided.
             let content = fs::read_to_string(format!("{pack}/package.toml"))
                 .context(format!("Failed to read {pack}/package.toml"))?;
 
-            package_files.push(content);
-            package_dirs.push(format!("{pack}"))
+            let mut pack_struct: Package = toml::from_str(&content).context(format!("{pack}/package.toml"))?;
+            pack_struct.name = pack.clone();
+            pack_struct.dir = pack.clone();
+            res.push(pack_struct);
         } else {
             // Just the package name was provided, so we search $ARC_PATH.
             let mut broke = false;
@@ -55,8 +71,10 @@ pub fn parse_package(packs: &Vec<String>) -> Result<(Vec<Table>, Vec<String>)> {
                     let content = fs::read_to_string(format!("{dir}/{pack}/package.toml"))
                         .context(format!("Failed to read {dir}/{pack}/package.toml"))?;
 
-                    package_files.push(content);
-                    package_dirs.push(format!("{dir}/{pack}"));
+                    let mut pack_struct: Package = toml::from_str(&content).context(format!("{pack}/package.toml"))?;
+                    pack_struct.name = pack.clone();
+                    pack_struct.dir = format!("{dir}/{pack}");
+                    res.push(pack_struct);
 
                     broke = true;
                     break;
@@ -70,22 +88,17 @@ pub fn parse_package(packs: &Vec<String>) -> Result<(Vec<Table>, Vec<String>)> {
         }
     }
 
-    // Read the content of each toml file and parse it.
-    let packs: Vec<Table> = package_files.iter().zip(packs)
-        .map(|(x, y)| x.parse().context(format!("{y}/package.toml")))
-        .collect::<Result<_, _>>()?;
-
-    Ok((packs, package_dirs))
+    Ok(res)
 }
 
-/// Download sources for each package in a vector.
+/// Download sources for each package in a vector, optionally using pre-parsed
+/// TOML data.
 pub fn download_all(
     packs: &Vec<String>,
-    pack_toml: Option<&Vec<Table>>,
-    pack_dirs: Option<&Vec<String>>,
+    pack_toml: Option<Vec<Package>>,
     force: bool,
     pad: Option<usize>
-) -> Result<Vec<Vec<String>>> {
+) -> Result<Vec<Package>> {
     let longest = match pad {
         Some(x) => x,
         None => packs.iter().fold(&packs[0], |acc, item| {
@@ -93,59 +106,66 @@ pub fn download_all(
         }).len(),
     };
 
-    let files: Vec<Vec<String>> = if let Some(n) = pack_toml {
+    if let Some(mut n) = pack_toml {
         // Packages have been parsed somewhere else and provided here. Just
         // read sources for each package and download.
-        n.iter().zip(packs).zip(pack_dirs.unwrap())
-            .map(|((x, y), z)| download_one(&x["meta"]["sources"], y, z, force, longest))
-            .collect::<Result<_>>()?
+        for pack in n.iter_mut() {
+            let sources = download_one(&pack.meta.sources, &pack.name, &pack.dir, force, longest)?;
+            pack.sources = sources;
+        }
+
+        return Ok(n);
     } else {
         // Packages have not already been parsed, so parse packages then
         // download sources for each package.
-        let (pack_toml, pack_dirs) = parse_package(packs)?;
-        pack_toml.iter().zip(packs).zip(&pack_dirs)
-            .map(|((x, y), z)| download_one(&x["meta"]["sources"], y, z, force, longest))
-            .collect::<Result<_>>()?
-    };
+        let mut pack_toml = parse_package(packs)?;
+        for pack in pack_toml.iter_mut() {
+            let sources = download_one(&pack.meta.sources, &pack.name, &pack.dir, force, longest)?;
+            pack.sources = sources;
+        }
 
-    // Return the paths to the downloaded files.
-    Ok(files)
+        return Ok(pack_toml);
+    }
 }
 
-/// Given some packages and their parsed toml, recursively identify all
+/// Given the parsed TOML data for some packages, recursively identify all
 /// dependencies. Returns a list of dependencies, with duplicates and installed
 /// packages removed, sorted by install layer (highest layer to lowest layer).
 pub fn resolve_deps(
-    packs: &Vec<String>,
-    pack_toml: &Vec<Map<String, Value>>,
+    pack_toml: &Vec<Package>,
     depth: usize,
 ) -> Result<Vec<Package>> {
     let mut raw_output = vec![];
-    for (pack, toml) in packs.iter().zip(pack_toml) {
-        for (name, ver_req) in toml["deps"].as_table().unwrap() {
-            let res = Package { name: name.to_string(), ver: ver_req.to_string(), depth };
-            raw_output.push(res);
+    for toml in pack_toml {
+        for (name, ver_req) in &toml.deps {
+            // If a satisfactory version of this dependency is installed,
+            // skip to the next one.
+            if is_installed(name, ver_req)? { continue; }
 
-            let (dep_toml, _) = parse_package(&vec![name.to_string()])?;
-            let mut deps = resolve_deps(&vec![name.to_string()], &dep_toml, depth + 1)?;
+            // Parse this dependency and fill out the 'name' and 'depth' fields.
+            let mut dep_toml = parse_package(&vec![name.to_string()])?;
+            dep_toml[0].name = name.clone();
+            dep_toml[0].depth = depth;
+
+            // Get dependencies of this dependency, and add everything to the
+            // list of dependencies.
+            let mut deps = resolve_deps(&dep_toml, depth + 1)?;
+            raw_output.push(dep_toml.remove(0));
             raw_output.append(&mut deps);
         }
     }
 
-    // Remove packages that are duplicates or are already installed, and leave
-    // the copy of each package with the highest install layer.
     let mut output: Vec<Package> = vec![];
     'o: for i in &raw_output {
-        if is_installed(&i.name, &i.ver)? {
-            continue 'o;
-        }
-
+        // If this is a duplicate, don't add it to the return vector.
         for j in &output {
             if j.name == i.name {
                 continue 'o;
             }
         }
 
+        // Find the highest depth of all copies of this dependency, and add
+        // the corresponding copy to the result vector.
         let mut pack = i.clone();
         for j in &raw_output {
             if j.name == pack.name && j.depth > pack.depth {
@@ -161,29 +181,21 @@ pub fn resolve_deps(
     Ok(output)
 }
 
-/// Verify checksums for some packages given their names, parsed toml, and
-/// paths to source files.
+/// Verify checksums for some packages given their parsed TOML data.
 pub fn checksums_all(
-    packs: &Vec<String>,
-    pack_toml: &Vec<Map<String, Value>>,
-    pack_dirs: &Vec<String>,
-    filenames: &Vec<Vec<String>>,
+    pack_toml: &Vec<Package>,
     pad: usize
 ) -> Result<()> {
-    for ((pack, toml), name) in filenames.iter().zip(pack_toml).zip(packs) {
+    for toml in pack_toml {
         // Read the checksums from package.toml and verify against sources.
-        if let Value::Array(x) = &toml["meta"]["checksums"] {
-            verify_checksums(pack, &x, name, pad)?;
-        } else {
-            bail!("Problem parsing {name}/package.toml: checksums is not an array");
-        }
+        verify_checksums(&toml.sources, &toml.meta.checksums, &toml.name, pad)?;
     }
 
     Ok(())
 }
 
-/// Build packages given their names, parsed toml, paths to the packages, and
-/// paths to source files. The following steps are performed for each package:
+/// Build packages given their parsed TOML data. The following steps are
+/// performed for each package:
 /// 1. Create cache directories for the package source and the destdir.
 /// 2. Extract archives (.tar.*) to the src directory, and copy all other files.
 /// 3. Execute the build script inside the src directory, passing the destdir
@@ -194,19 +206,14 @@ pub fn checksums_all(
 ///    destdir/var/cache/arc/installed/<name>@<version>.
 /// 5. Generate a tarball of the destdir and save it in the cache directory.
 pub fn build_all(
-    packs: &Vec<String>,
-    pack_toml: &Vec<Map<String, Value>>,
-    pack_dirs: &Vec<String>,
-    filenames: &Vec<Vec<String>>,
+    pack_toml: &Vec<Package>,
     verbose: bool,
 ) -> Result<()> {
-    for (i, (((pack, name), dir), toml)) in filenames.iter()
-        .zip(packs).zip(pack_dirs).zip(pack_toml)
-        .enumerate()
-    {
-        // Grab the package version from its parsed toml.
-        let version = toml["meta"]["version"].as_str().unwrap();
-        info_fmt!("\x1b[36m{}\x1b[0m Building package ({}/{})", name, i + 1, filenames.len());
+    for (i, toml) in pack_toml.iter().enumerate() {
+        let name = &toml.name;
+        let version = &toml.meta.version;
+        let dir = &toml.dir;
+        info_fmt!("\x1b[36m{}\x1b[0m Building package ({}/{})", name, i + 1, pack_toml.len());
 
         // Create cache directories for src and destdir.
         let src_dir = format!("{}/build/{name}/src", *CACHE);
@@ -216,7 +223,7 @@ pub fn build_all(
 
         info_fmt!("\x1b[36m{}\x1b[0m Extracting sources", name);
 
-        for file in pack {
+        for file in &toml.sources {
             if file.starts_with("tar+") {
                 // Don't extract this tarball, just copy it as-is.
                 let file = &file[4..];
@@ -330,11 +337,11 @@ pub fn build_all(
     Ok(())
 }
 
-/// Install some packages given their names and parsed toml. This does the the
+/// Install some packages given their parsed TOML data. This does the the
 /// following:
 /// 1. If not running as root, use sudo, doas, or su to become the root user.
 /// 2. Extract the binary tarball to /.
-pub fn install_all(packs: &Vec<String>, pack_toml: &Vec<Map<String, Value>>) -> Result<()> {
+pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
     let su_command = if fs::metadata("/bin/sudo").is_ok() {
         "sudo"
     } else if fs::metadata("bin/doas").is_ok() {
@@ -349,8 +356,9 @@ pub fn install_all(packs: &Vec<String>, pack_toml: &Vec<Map<String, Value>>) -> 
         log::info("Using sudo to become root.");
     }
 
-    for (i, (name, toml)) in packs.iter().zip(pack_toml).enumerate() {
-        let version = toml["meta"]["version"].as_str().unwrap();
+    for (i, toml) in pack_toml.iter().enumerate() {
+        let name = &toml.name;
+        let version = &toml.meta.version;
         let bin_file = format!("{}/bin/{}@{}.tar.gz", *CACHE, name, version);
 
         if Uid::effective().is_root() {
@@ -382,7 +390,7 @@ pub fn install_all(packs: &Vec<String>, pack_toml: &Vec<Map<String, Value>>) -> 
             }
         }
 
-        info_fmt!("Successfully installed {} @ {} ({}/{})", name, version, i + 1, packs.len());
+        info_fmt!("Successfully installed {} @ {} ({}/{})", name, version, i + 1, pack_toml.len());
     }
 
     Ok(())
@@ -390,95 +398,90 @@ pub fn install_all(packs: &Vec<String>, pack_toml: &Vec<Map<String, Value>>) -> 
 
 // Download the sources for a single package.
 pub fn download_one(
-    urls: &Value,
+    urls: &Vec<String>,
     name: &String,
     repo_dir: &String,
     force: bool,
     pad: usize
 ) -> Result<Vec<String>> {
     let mut fnames = vec![];
-    if let Value::Array(x) = urls {
-        // Create a cache directory for downloaded sources.
-        let dir = format!("{}/dl", *CACHE);
-        fs::create_dir_all(&dir).context(format!("Couldn't create directory {dir}"))?;
+    // Create a cache directory for downloaded sources.
+    let dir = format!("{}/dl", *CACHE);
+    fs::create_dir_all(&dir).context(format!("Couldn't create directory {dir}"))?;
 
-        for (i, url) in x.iter().enumerate() {
-            let og_url = url.to_string().replace("\"", "");
-            let mut url = url.to_string().replace("\"", "");
+    for (i, url) in urls.iter().enumerate() {
+        let og_url = url.clone();
+        let mut url = url.clone();
 
-            let filename = url.split('/').last().unwrap().to_owned();
-            let filename = format!("{dir}/{filename}");
+        let filename = url.split('/').last().unwrap().to_owned();
+        let filename = format!("{dir}/{filename}");
 
-            // Remove any prefixes from the url.
-            if &url[3..4] == "+" {
-                url = url[4..].to_string();
-                fnames.push("tar+".to_owned() + &filename);
-            } else {
-                fnames.push(filename.clone());
-            }
-
-            // If a file is already downloaded and we are not forcing the
-            // download, skip this file.
-            if fs::metadata(filename.clone()).is_ok() &&! force {
-                info_ident_fmt!("\x1b[36m{: <pad$}\x1b[0m {} already downloaded, skipping", name, url);
-                continue;
-            }
-
-            if url.starts_with("https://") || url.starts_with("http://") {
-                // This is a remote url, so download it from the internet.
-                loop {
-                    let mut body = vec![];
-
-                    // Get the size of the file to be downloaded, if available.
-                    let head = request::head(&url)?;
-                    let len = head.content_len().unwrap_or(0);
-
-                    // Create a pretty download progress bar.
-                    let bar = "[{elapsed_precise}] [{bar:30.magenta/magenta}] ({bytes_per_sec}, ETA {eta})";
-                    let bar_fmt = format!("  \x1b[35m->\x1b[0m \x1b[36m{name: <pad$}\x1b[0m {bar} ({}/{}) ({og_url})", i + 1, x.len());
-
-                    let bar = ProgressBar::new(len as u64);
-                    bar.set_style(ProgressStyle::with_template(&bar_fmt).unwrap().progress_chars("-> "));
-
-                    // Try to download the file.
-                    let res = request::get_with_update(&url, &mut body, |x| bar.inc(x as u64))
-                        .context(format!("Couldn't connect to {url}"))?;
-
-                    if res.status_code().is_success() {
-                        // The file was downloaded successfully, save it and
-                        // move on to the next file.
-                        bar.finish();
-                        eprintln!();
-                        let mut out = File::create(&filename).context(format!("Couldn't create file {filename}"))?;
-                        out.write_all(&body)
-                            .context(format!("Couldn't save downloaded file to {filename}"))?;
-
-                        break;
-                    } else if res.status_code().is_redirect() {
-                        // The request returned a redirect, get the actual
-                        // file location and update the url.
-                        bar.finish_and_clear();
-                        url = res.headers().get("Location").unwrap().to_owned();
-                    } else {
-                        // The request returned a different failure code, bail.
-                        bar.finish_and_clear();
-                        bail!(
-                            "Failed to download source {url} ({} {})",
-                            res.status_code(),
-                            res.reason()
-                        );
-                    }
-                }
-            } else if url.starts_with("git+") {
-                bail!("Git sources are not yet supported ({url})");
-            } else {
-                // This is a local file, copy it to the download cache.
-                fs::copy(format!("{repo_dir}/{url}"), filename)
-                    .context(format!("Could not copy local file {name}/{url} to download cache"))?;
-            }
+        // Remove any prefixes from the url.
+        if &url[3..4] == "+" {
+            url = url[4..].to_string();
+            fnames.push("tar+".to_owned() + &filename);
+        } else {
+            fnames.push(filename.clone());
         }
-    } else {
-        bail!("Problem parsing {name}/package.toml: sources is not an array");
+
+        // If a file is already downloaded and we are not forcing the
+        // download, skip this file.
+        if fs::metadata(filename.clone()).is_ok() &&! force {
+            info_ident_fmt!("\x1b[36m{: <pad$}\x1b[0m {} already downloaded, skipping", name, url);
+            continue;
+        }
+
+        if url.starts_with("https://") || url.starts_with("http://") {
+            // This is a remote url, so download it from the internet.
+            loop {
+                let mut body = vec![];
+                // Get the size of the file to be downloaded, if available.
+                let head = request::head(&url)?;
+                let len = head.content_len().unwrap_or(0);
+
+                // Create a pretty download progress bar.
+                let bar = "[{elapsed_precise}] [{bar:30.magenta/magenta}] ({bytes_per_sec}, ETA {eta})";
+                let bar_fmt = format!("  \x1b[35m->\x1b[0m \x1b[36m{name: <pad$}\x1b[0m {bar} ({}/{}) ({og_url})", i + 1, urls.len());
+
+                let bar = ProgressBar::new(len as u64);
+                bar.set_style(ProgressStyle::with_template(&bar_fmt).unwrap().progress_chars("-> "));
+
+                // Try to download the file.
+                let res = request::get_with_update(&url, &mut body, |x| bar.inc(x as u64))
+                    .context(format!("Couldn't connect to {url}"))?;
+
+                if res.status_code().is_success() {
+                    // The file was downloaded successfully, save it and
+                    // move on to the next file.
+                    bar.finish();
+                    eprintln!();
+                    let mut out = File::create(&filename).context(format!("Couldn't create file {filename}"))?;
+                    out.write_all(&body)
+                        .context(format!("Couldn't save downloaded file to {filename}"))?;
+
+                    break;
+                } else if res.status_code().is_redirect() {
+                    // The request returned a redirect, get the actual
+                    // file location and update the url.
+                    bar.finish_and_clear();
+                    url = res.headers().get("Location").unwrap().to_owned();
+                } else {
+                    // The request returned a different failure code, bail.
+                    bar.finish_and_clear();
+                    bail!(
+                        "Failed to download source {url} ({} {})",
+                        res.status_code(),
+                        res.reason()
+                    );
+                }
+            }
+        } else if url.starts_with("git+") {
+            bail!("Git sources are not yet supported ({url})");
+        } else {
+            // This is a local file, copy it to the download cache.
+            fs::copy(format!("{repo_dir}/{url}"), filename)
+                .context(format!("Could not copy local file {name}/{url} to download cache"))?;
+        }
     }
 
     // Return the paths to each downloaded file.
@@ -488,7 +491,7 @@ pub fn download_one(
 // Verify the checksums for a set of files.
 pub fn verify_checksums(
     fnames: &Vec<String>,
-    checksums: &Vec<Value>,
+    checksums: &Vec<String>,
     pack: &String,
     pad: usize
 ) -> Result<()> {
@@ -508,7 +511,7 @@ pub fn verify_checksums(
         info_ident_fmt!(
             "\x1b[36m{: <pad$}\x1b[0m {} / {} ({})",
             pack,
-            &sum.as_str().unwrap()[..10],
+            &sum[..10],
             &hash.to_string()[..10],
             Path::new(file).file_name().unwrap().to_str().unwrap(),
         );

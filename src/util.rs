@@ -1,12 +1,12 @@
 //! This module contains some miscellaneous utility functions.
 
-use std::fs::File;
 use std::io::{Read, Write};
 
+/// Write data from a stream to two different outputs concurrently.
 pub fn tee(
     mut stream: impl Read,
-    file: &mut File,
-    mut output: impl Write,
+    mut out_1: impl Write,
+    mut out_2: impl Write,
 ) -> std::io::Result<()> {
     let mut buf = [0u8; 1024];
     loop {
@@ -16,8 +16,8 @@ pub fn tee(
         }
 
         let buf = &buf[..num_read];
-        file.write_all(buf)?;
-        output.write_all(buf)?;
+        out_1.write_all(buf)?;
+        out_2.write_all(buf)?;
     }
 
     Ok(())
