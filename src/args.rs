@@ -13,20 +13,26 @@ pub enum Op {
     Version,
 }
 
-#[derive(Debug)]
+impl Default for Op {
+    fn default() -> Self {
+        Op::Die(0)
+    }
+}
+
+#[derive(Debug, Default)]
 pub struct Cmd {
     pub kind: Op,
     pub sync: bool,
     pub verbose: bool,
+    pub yes: bool,
 }
 
 /// Parse command line arguments.
 pub fn parse(args: &mut Vec<String>) -> Cmd {
     if args.len() > 1 {
-        let mut sync = false;
-        let mut verbose = false;
+        let mut cmd = Cmd::default();
 
-        let kind = 'o: loop { match args[1].as_str() {
+        cmd.kind = 'o: loop { match args[1].as_str() {
             "b" | "build" => {
                 if args.len() > 2 {
                     break Op::Build(args[2..].to_vec());
@@ -70,35 +76,27 @@ pub fn parse(args: &mut Vec<String>) -> Cmd {
                 }
             },
             "p" | "purge" => break Op::Purge,
-            "version" => break Op::Version,
+            "v" | "version" => break Op::Version,
             "h" | "help" => break Op::Die(0),
             x => {
                 for c in x.chars() {
                     match c {
-                        's' => {
-                            sync = true;
-                            args[1].remove(0);
-                            continue 'o;
-                        },
-                        'v' => {
-                            verbose = true;
-                            args[1].remove(0);
-                            continue 'o;
-                        },
-                        _ => (),
+                        's' => cmd.sync = true,
+                        'v' => cmd.verbose = true,
+                        'y' => cmd.yes = true,
+                        _ => continue,
                     }
+
+                    args[1].remove(0);
+                    continue 'o;
                 }
 
                 break Op::Die(1);
             },
         }};
 
-        return Cmd { kind, sync, verbose };
+        return cmd;
     } else {
-        return Cmd {
-            kind: Op::Die(0),
-            sync: false,
-            verbose: false,
-        };
+        return Cmd::default();
     }
 }

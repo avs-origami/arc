@@ -207,7 +207,7 @@ pub fn checksums_all(
 /// 5. Generate a tarball of the destdir and save it in the cache directory.
 pub fn build_all(
     pack_toml: &Vec<Package>,
-    verbose: bool,
+    args: &crate::args::Cmd,
 ) -> Result<()> {
     for (i, toml) in pack_toml.iter().enumerate() {
         let name = &toml.name;
@@ -245,7 +245,7 @@ pub fn build_all(
         }
 
         info_fmt!("\x1b[36m{}\x1b[0m Running build script", name);
-        if verbose { eprintln!(); }
+        if args.verbose { eprintln!(); }
 
         // Resolve the absolute path to the build script.
         let build_script = fs::canonicalize(format!("{dir}/build"))
@@ -256,7 +256,7 @@ pub fn build_all(
         let mut build_cmd = Command::new(build_script);
         build_cmd.arg(&dest_dir).arg(&version).current_dir(src_dir);
 
-        let build_status = if !verbose {
+        let build_status = if !args.verbose {
             // This is the default behavior if the 'v' flag wasn't given. Just
             // pipe the build output to log.txt.
             build_cmd.stdout(log_file.try_clone()?).stderr(log_file.try_clone()?);
@@ -287,7 +287,7 @@ pub fn build_all(
             child.wait().context(format!("Couldn't wait on child process {dir}/build"))?
         };
 
-        if verbose { eprintln!(); }
+        if args.verbose { eprintln!(); }
 
         if build_status.success() {
             info_fmt!("\x1b[36m{}\x1b[0m Successfully built package", name);

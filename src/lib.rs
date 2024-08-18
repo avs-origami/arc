@@ -50,7 +50,7 @@ pub fn print_help(code: i32) -> ! {
     eprintln!(" \x1b[35m/ / /\\  \\ \\  \x1b[33m\\_\x1b[36m\\ |__.");
     eprintln!("\x1b[35m/__./  \\.___\\    \x1b[36m\\___/");
     eprintln!("\x1b[0m");
-    eprintln!("Usage: \x1b[33marc\x1b[0m [b/c/d/h/i/l/n/p/r/s/u/v] [pkg]..");
+    eprintln!("Usage: \x1b[33marc\x1b[0m [s/v/y][b/c/d/h/i/l/n/p/r/s/u/v] [pkg]...");
     log::info_ident("b / build     Build packages");
     log::info_ident("c / checksum  Generate checksums");
     log::info_ident("d / download  Download sources");
@@ -63,6 +63,10 @@ pub fn print_help(code: i32) -> ! {
     log::info_ident("s / sync      Sync remote repositories");
     log::info_ident("u / upgrade   Upgrade all packages");
     log::info_ident("v / version   Print version");
+    eprintln!("Flags:");
+    log::info_ident("s  Sync remote repositories");
+    log::info_ident("v  Enable verbose builds");
+    log::info_ident("y  Skip confirmation prompts");
     eprintln!("\nCreated by AVS Origami\n");
     process::exit(code)
 }
@@ -153,7 +157,7 @@ pub fn generate_checksums() -> Result<()> {
 ///      - Install all packages in that layer
 /// 6. Build all remaining explicit packages.
 /// 7. Prompt to install remaining explicit packages.
-pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
+pub fn build(packs: &Vec<String>, args: &args::Cmd) -> Result<()> {
     // Parse all explicit packages, getting package TOML and the path for each.
     let pack_toml = actions::parse_package(&packs)?;
 
@@ -250,7 +254,7 @@ pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
 
     eprintln!();
 
-    log::prompt();
+    if !args.yes { log::prompt(); }
 
     // Download all source files.
     log::info("Downloading sources");
@@ -286,7 +290,7 @@ pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
         for idx in &layer_idxs {
             actions::build_all(
                 &dep_toml[idx.0..idx.1].to_vec(),
-                verbose,
+                args,
             )?;
 
             info_fmt!("Installing layer {} dependencies", dep_toml[idx.0].depth);
@@ -296,12 +300,12 @@ pub fn build(packs: &Vec<String>, verbose: bool) -> Result<()> {
     }
 
     // Build all remaining explicit packages.
-    actions::build_all(&pack_toml, verbose)?;
+    actions::build_all(&pack_toml, args)?;
 
     // Prompt the user, asking whether to install the remaining explicit
     // packages that were just build.
     log::info("Installing built packages.");
-    log::prompt();
+    if !args.yes { log::prompt(); }
     actions::install_all(&pack_toml)?;
 
     Ok(())
