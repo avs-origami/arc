@@ -48,6 +48,19 @@ pub fn is_installed(pack: &String, version: &String) -> Result<bool> {
     Ok(path.next().is_some())
 }
 
+/// Check if a file is tracked by any installed packages.
+pub fn is_tracked(file: &String) -> Result<Option<String>> {
+    for f in fs::read_dir("/var/cache/arc/installed/")? {
+        let uf = f?;
+        let content = fs::read_to_string(&uf.path())?;
+        if content.contains(file) {
+            return Ok(Some(uf.file_name().to_str().unwrap().to_string()));
+        }
+    }
+
+    Ok(None)
+}
+
 /// Given a vector of package names, parse and return the toml data and the
 /// path for each, checking both absolute paths and $ARC_PATH for packages.
 pub fn parse_package(packs: &Vec<String>) -> Result<Vec<Package>> {
@@ -340,8 +353,9 @@ pub fn build_all(
 /// Install some packages given their parsed TOML data. This does the the
 /// following:
 /// 1. If not running as root, use sudo, doas, or su to become the root user.
-/// 2. Extract the binary tarball to /.
-pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
+/// 2. Extract the manifest 
+/// 3. Extract the binary tarball to /.
+pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> { 
     let su_command = if fs::metadata("/bin/sudo").is_ok() {
         "sudo"
     } else if fs::metadata("bin/doas").is_ok() {
@@ -359,7 +373,25 @@ pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
     for (i, toml) in pack_toml.iter().enumerate() {
         let name = &toml.name;
         let version = &toml.meta.version;
-        let bin_file = format!("{}/bin/{}@{}.tar.gz", *CACHE, name, version);
+        let bin_file = format!("{}/bin/{name}@{version}.tar.gz", *CACHE);
+        let manifest = format!("./var/cache/arc/installed/{name}@{version}");
+        let tmp_dir = format!("{}/tmp", *CACHE);
+
+        fs::create_dir_all(&tmp_dir).context(format!("Couldn't create temp dir {tmp_dir}"))?;
+
+        Command::new("tar")
+            .args(["xf", &bin_file, "-C", &tmp_dir, &manifest])
+            .status()
+            .context(format!("Couldn't extract manifest from binary tarball"))?;
+
+        let manifest_content = fs::read_to_string(format!("{tmp_dir}/{manifest}"))?;
+        for line in manifest_content.lines() {
+            if let Some(n) = is_tracked(&line.into())? {
+                if fs::metadata(line)?.is_file() && n != format!("{name}@{version}") {
+                    bail!("Package conflicts found: file {line} is already tracked by another package");
+                }
+            }
+        }
 
         if Uid::effective().is_root() {
             Command::new("tar")
@@ -392,11 +424,11 @@ pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
 
         info_fmt!("Successfully installed {} @ {} ({}/{})", name, version, i + 1, pack_toml.len());
     }
-
+ 
     Ok(())
 }
 
-// Download the sources for a single package.
+/// Download the sources for a single package.
 pub fn download_one(
     urls: &Vec<String>,
     name: &String,
@@ -488,7 +520,7 @@ pub fn download_one(
     Ok(fnames)
 }
 
-// Verify the checksums for a set of files.
+/// Verify the checksums for a set of files.
 pub fn verify_checksums(
     fnames: &Vec<String>,
     checksums: &Vec<String>,
