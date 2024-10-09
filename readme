@@ -27,8 +27,9 @@ This is a list of all planned features and their implementation status.
         [x] Build / install dependencies in order
         [ ] Circular dependency checks
         [ ] Provides system
-    [ ] Conflict resolution
+    [-] Conflict resolution
     [x] Build packages and install to destdir
+    [x] Strip binaries
     [x] Install built packages to sysroot
     [x] Remove installed packages
     [x] Build log file

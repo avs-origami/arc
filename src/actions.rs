@@ -307,11 +307,21 @@ pub fn build_all(
         } else {
             bail!("Couldn't build package {name}");
         }
-
-        info_fmt!("\x1b[36m{}\x1b[0m Generating manifest", name);
-
+        
+        // Strip unneeded symbols from binaries to reduce the package size.
+        info_fmt!("\x1b[36m{}\x1b[0m Stripping binaries", name);
+        for file in glob(&format!("{dest_dir}/**/*"))? {
+            let path = format!("{}", file?.display());
+            let _ = Command::new("strip")
+                .args(["--strip-unneeded", &path])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+ 
         // Create the package manifest at
         // destdir/var/cache/arc/installed/<name>@<version>.
+        info_fmt!("\x1b[36m{}\x1b[0m Generating manifest", name);
         let manifest_dir = format!("{dest_dir}/var/cache/arc/installed");
         let manifest = format!("{manifest_dir}/{name}@{version}");
 
