@@ -365,22 +365,10 @@ pub fn build_all(
 /// 1. If not running as root, use sudo, doas, or su to become the root user.
 /// 2. Extract the manifest 
 /// 3. Extract the binary tarball to /.
-pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> { 
-    let su_command = if fs::metadata("/bin/sudo").is_ok() {
-        "sudo"
-    } else if fs::metadata("bin/doas").is_ok() {
-        "doas"
-    } else if fs::metadata("/bin/su").is_ok() {
-        "su"
-    } else {
-        ""
-    };
+pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
+    log::info("Checking for conflicts");
 
-    if ! Uid::effective().is_root() {
-        log::info("Using sudo to become root.");
-    }
-
-    for (i, toml) in pack_toml.iter().enumerate() {
+    for toml in pack_toml {
         let name = &toml.name;
         let version = &toml.meta.version;
         let bin_file = format!("{}/bin/{name}@{version}.tar.gz", *CACHE);
@@ -402,6 +390,27 @@ pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
                 }
             }
         }
+    }
+
+
+    let su_command = if fs::metadata("/bin/sudo").is_ok() {
+        "sudo"
+    } else if fs::metadata("bin/doas").is_ok() {
+        "doas"
+    } else if fs::metadata("/bin/su").is_ok() {
+        "su"
+    } else {
+        ""
+    };
+
+    if ! Uid::effective().is_root() {
+        log::info("Using sudo to become root.");
+    }
+
+    for (i, toml) in pack_toml.iter().enumerate() {
+        let name = &toml.name;
+        let version = &toml.meta.version;
+        let bin_file = format!("{}/bin/{name}@{version}.tar.gz", *CACHE);
 
         if Uid::effective().is_root() {
             Command::new("tar")
