@@ -8,7 +8,8 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::process::{self, Command, Stdio};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
+use glob::glob;
 use indicatif::{ProgressBar, ProgressStyle};
 use lazy_static::lazy_static;
 
@@ -375,9 +376,19 @@ pub fn install(packs: &Vec<String>) -> Result<()> {
 /// manifest.
 pub fn remove(packs: &Vec<String>) -> Result<()> {
     for pack in packs {
+        // Make sure the package is installed.
+        if !actions::is_installed(pack, &"*".into())? {
+            bail!("Package {pack} is not installed");
+        }
+
         // Read the package manifest.
-        let manifest = fs::read_to_string(format!("/var/cache/arc/installed/{pack}"))
-            .context(format!("Couldn't read package manifest at /var/cache/arc/installed/{pack}"))?;
+        let mut manifest_glob = glob(&format!("/var/cache/arc/installed/{pack}@*"))
+            .context(format!("Error constructing glob /var/cache/arc/installed/{pack}@*"))?;
+
+        let manifest_path = manifest_glob.next().unwrap()?;
+
+        let manifest = fs::read_to_string(&manifest_path)
+            .context(format!("Couldn't read manifest of package {pack} at {}", manifest_path.display()))?;
 
         // Since the manifest was generated using a glob, we iterate through
         // the lines in reverse to remove the deepest files first.
@@ -390,6 +401,8 @@ pub fn remove(packs: &Vec<String>) -> Result<()> {
                     .context(format!("Couldn't remove file {}", real_path.display()))?;
             }
         }
+
+        info_fmt!("{pack} Successfully uninstalled package");
     }
 
     Ok(())
