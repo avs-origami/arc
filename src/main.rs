@@ -23,7 +23,12 @@ fn main() {
     let parsed = args::parse(&mut cli_args);
 
     if parsed.sync {
-        log::warn("sync is not implemented yet");
+        match arc::sync() {
+            Ok(_) => (),
+            Err(e) => {
+                log::die(&format!("{:#}", &e));
+            }
+        }
     }
 
     // Match the given command, and execute the appropriate action, storing

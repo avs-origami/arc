@@ -5,9 +5,11 @@ use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
-use std::process;
+use std::process::{self, Command, Stdio};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
+use indicatif::{ProgressBar, ProgressStyle};
 use lazy_static::lazy_static;
 
 pub mod args;
@@ -143,6 +145,56 @@ pub fn generate_checksums() -> Result<()> {
     Ok(())
 }
 
+/// Sync remote repositories.
+pub fn sync() -> Result<()> {
+    log::info("Syncing remote repositories");
+
+    let mut pad = 0;
+    for dir in &*ARC_PATH {
+        let name = dir.split('/').last().unwrap();
+        if name.len() > pad {
+            pad = name.len();
+        }
+    }
+
+    for dir in &*ARC_PATH {
+        let name = dir.split('/').last().unwrap();
+        let bar = "[{elapsed_precise}] [{spinner:.magenta}]";
+        let bar_fmt = format!("  \x1b[35m->\x1b[0m \x1b[36m{name: <pad$}\x1b[0m {bar}");
+
+        let sp = ProgressBar::new_spinner();
+        sp.enable_steady_tick(Duration::from_millis(75));
+        sp.set_style(
+            ProgressStyle::with_template(&bar_fmt)
+                .unwrap()
+                .tick_strings(&[
+                    "<>    ",
+                    " <>   ",
+                    "  <>  ",
+                    "   <> ",
+                    "    <>",
+                    "   <> ",
+                    "  <>  ",
+                    " <>   ",
+                    "<<<>>>",
+                ]),
+        );
+
+        Command::new("git")
+            .arg("pull")
+            .current_dir(dir)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .context(format!("Couldn't pull repo {dir} with git"))?;
+
+        sp.finish();
+    }
+
+    println!("\n");
+    Ok(())
+}
+
 /// Build some packages. This does the following steps:
 /// 1. Resolve dependencies of each package, and determine which layer
 ///    to install each.
@@ -240,16 +292,16 @@ pub fn build(packs: &Vec<String>, args: &args::Cmd) -> Result<()> {
 
     // Output the table of package names and versions, with a confirmation prompt.
     log::info("Building packages:\n");
-    info_fmt!("{: <pad$} {: <version_pad$}", name_header, version_header);
+    println!("   {: <pad$} {: <version_pad$}", name_header, version_header);
     eprintln!();
 
     for toml in &pack_toml {
         if dep_names.contains(&toml.name) { continue; }
-        info_fmt!("{: <pad$} {: <version_pad$} (explicit)", toml.name, toml.meta.version);
+        println!("   {: <pad$} {: <version_pad$} (explicit)", toml.name, toml.meta.version);
     }
 
     for toml in &dep_toml {
-        info_fmt!("{: <pad$} {: <version_pad$} (layer {})", toml.name, toml.meta.version, toml.depth);
+        println!("   {: <pad$} {: <version_pad$} (layer {})", toml.name, toml.meta.version, toml.depth);
     }
 
     eprintln!();

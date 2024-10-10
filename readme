@@ -34,10 +34,10 @@ This is a list of all planned features and their implementation status.
     [x] Remove installed packages
     [x] Build log file
 
-[-] Package repositories
+[x] Package repositories
     [x] Package format
     [x] Find packages in user-defined path
-    [ ] Fetch repositores from remote
+    [x] Fetch repositores from remote
 
 [x] CLI interface
     [x] Argument parsing
