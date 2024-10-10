@@ -393,7 +393,7 @@ pub fn remove(packs: &Vec<String>) -> Result<()> {
         // Since the manifest was generated using a glob, we iterate through
         // the lines in reverse to remove the deepest files first.
         for file in manifest.lines().rev() {
-            let real_path = fs::canonicalize(file)?;
+            let real_path = fs::canonicalize(file).context(format!("Couldn't canonicalize {file}"))?;
             if fs::metadata(&real_path)?.is_dir() {
                 let _ = fs::remove_dir(&real_path);
             } else {
