@@ -53,7 +53,7 @@ pub fn is_tracked(file: &String) -> Result<Option<String>> {
     for f in fs::read_dir("/var/cache/arc/installed/")? {
         let uf = f?;
         let content = fs::read_to_string(&uf.path())?;
-        if content.contains(file) {
+        if content.contains(&format!("{file}\n")) {
             return Ok(Some(uf.file_name().to_str().unwrap().to_string()));
         }
     }
@@ -385,8 +385,9 @@ pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
         let manifest_content = fs::read_to_string(format!("{tmp_dir}/{manifest}"))?;
         for line in manifest_content.lines() {
             if let Some(n) = is_tracked(&line.into())? {
-                if fs::metadata(line)?.is_file() && n != format!("{name}@{version}") {
-                    bail!("Package conflicts found: file {line} is already tracked by another package");
+                let other_name = n.split('@').collect::<Vec<&str>>()[0];
+                if fs::metadata(line)?.is_file() && other_name != name {
+                    bail!("Package conflicts found: file {line} is already tracked by package {other_name}");
                 }
             }
         }

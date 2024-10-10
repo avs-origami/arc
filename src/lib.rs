@@ -385,7 +385,7 @@ pub fn remove(packs: &Vec<String>) -> Result<()> {
         let mut manifest_glob = glob(&format!("/var/cache/arc/installed/{pack}@*"))
             .context(format!("Error constructing glob /var/cache/arc/installed/{pack}@*"))?;
 
-        let manifest_path = manifest_glob.next().unwrap()?;
+        let manifest_path = manifest_glob.next().unwrap().context("Couldn't get manifest path")?;
 
         let manifest = fs::read_to_string(&manifest_path)
             .context(format!("Couldn't read manifest of package {pack} at {}", manifest_path.display()))?;
@@ -393,13 +393,17 @@ pub fn remove(packs: &Vec<String>) -> Result<()> {
         // Since the manifest was generated using a glob, we iterate through
         // the lines in reverse to remove the deepest files first.
         for file in manifest.lines().rev() {
-            let real_path = fs::canonicalize(file).context(format!("Couldn't canonicalize {file}"))?;
-            if fs::metadata(&real_path)?.is_dir() {
-                let _ = fs::remove_dir(&real_path);
-            } else {
-                fs::remove_file(&real_path)
-                    .context(format!("Couldn't remove file {}", real_path.display()))?;
-            }
+            let _ = Command::new("rmdir")
+                .arg(file)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+
+            let _ = Command::new("rm")
+                .arg(file)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
         }
 
         info_fmt!("{pack} Successfully uninstalled package");
