@@ -16,6 +16,7 @@ use nix::unistd::Uid;
 use serde::Deserialize;
 
 use crate::{info_fmt, info_ident_fmt, ARC_PATH, CACHE};
+use crate::args;
 use crate::log;
 use crate::util;
 
@@ -102,6 +103,109 @@ pub fn parse_package(packs: &Vec<String>) -> Result<Vec<Package>> {
     }
 
     Ok(res)
+}
+
+/// Output a pretty summary of packages that will be affected by an action.
+pub fn summary(packs: &Vec<String>, args: &args::Cmd, header: &str) -> Result<(Vec<Package>, Vec<Package>, Vec<String>, usize)> {
+    // Parse all explicit packages, getting package TOML and the path for each.
+    let pack_toml = parse_package(&packs)?;
+
+    // Get the length of the longest package name.
+    let pad = packs.iter().fold(&packs[0], |acc, item| {
+        if item.len() > acc.len() { &item } else { acc }
+    }).len();
+
+    // Resolve all dependencies, getting package.toml and the path for each.
+    let dep_toml = resolve_deps(&pack_toml, 1)?;
+    let dep_names: Vec<String> = dep_toml.iter().map(|x| x.name.clone()).collect();
+
+    // Get the length of the longest dependency name.
+    let pad_dep = if dep_names.len() > 0 {
+        dep_names.iter().fold(&dep_names[0], |acc, item| {
+            if item.len() > acc.len() { &item } else { acc }
+        }).len()
+    } else {
+        0
+    };
+
+    // Get the length of the longest package / dependency name.
+    let pad = if pad >= pad_dep { pad } else { pad_dep };
+
+    // Determine the length of the longest version string.
+    let version_pad = pack_toml.iter().fold(
+        &pack_toml[0],
+        |acc, item| {
+            let version_acc = &acc.meta.version;
+            let version_item = &item.meta.version;
+
+            if version_item.len() > version_acc.len() { &item } else { acc }
+        }
+    ).meta.version.len();
+
+    let version_pad_dep = if dep_names.len() > 1 {
+        dep_toml.iter().fold(
+            &dep_toml[0],
+            |acc, item| {
+                let version_acc = &acc.meta.version;
+                let version_item = &item.meta.version;
+
+                if version_item.len() > version_acc.len() { &item } else { acc }
+            }
+        ).meta.version.len()
+    } else if dep_names.len() == 1 {
+        dep_toml[0].meta.version.len()
+    } else {
+        0
+    };
+
+    let version_pad = if version_pad >= version_pad_dep { version_pad } else { version_pad_dep };
+    let real_pad = pad;
+
+    // Still calculating padding: compare the previous name and version lengths
+    // to the lengths of the name and version headings, and pick the longest
+    // one. This lets us display package names and versions in a neat table.
+    let name_header = format!("Package ({})", packs.len() + dep_names.len());
+    let version_header = "Version";
+
+    let pad = if pad < name_header.len() + 3 {
+        name_header.len() + 3
+    } else {
+        pad + 3
+    };
+
+    let version_pad = if version_pad < version_header.len() + 3 {
+        version_header.len() + 3
+    } else {
+        version_pad + 3
+    };
+
+    // If any explicit packages are already installed and the latest version,
+    // warn that we are reinstalling.
+    for toml in &pack_toml {
+        if is_installed(&toml.name, &toml.meta.version)? && header != "Removing" {
+            log::warn(&format!("Package {} is up to date - reinstalling", &toml.name));
+        }
+    }
+
+    // Output the table of package names and versions, with a confirmation prompt.
+    info_fmt!("{} packages:\n", header);
+    println!("   {: <pad$} {: <version_pad$}", name_header, version_header);
+    eprintln!();
+
+    for toml in &pack_toml {
+        if dep_names.contains(&toml.name) { continue; }
+        println!("   {: <pad$} {: <version_pad$} (explicit)", toml.name, toml.meta.version);
+    }
+
+    for toml in &dep_toml {
+        println!("   {: <pad$} {: <version_pad$} (layer {})", toml.name, toml.meta.version, toml.depth);
+    }
+
+    eprintln!();
+
+    if !args.yes { log::prompt(); }
+
+    Ok((pack_toml, dep_toml, dep_names, real_pad))
 }
 
 /// Download sources for each package in a vector, optionally using pre-parsed

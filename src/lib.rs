@@ -211,103 +211,8 @@ pub fn sync() -> Result<()> {
 /// 6. Build all remaining explicit packages.
 /// 7. Prompt to install remaining explicit packages.
 pub fn build(packs: &Vec<String>, args: &args::Cmd) -> Result<()> {
-    // Parse all explicit packages, getting package TOML and the path for each.
-    let pack_toml = actions::parse_package(&packs)?;
-
-    // Get the length of the longest package name.
-    let pad = packs.iter().fold(&packs[0], |acc, item| {
-        if item.len() > acc.len() { &item } else { acc }
-    }).len();
-
-    // Resolve all dependencies, getting package.toml and the path for each.
-    let dep_toml = actions::resolve_deps(&pack_toml, 1)?;
-    let dep_names: Vec<String> = dep_toml.iter().map(|x| x.name.clone()).collect();
-
-    // Get the length of the longest dependency name.
-    let pad_dep = if dep_names.len() > 0 {
-        dep_names.iter().fold(&dep_names[0], |acc, item| {
-            if item.len() > acc.len() { &item } else { acc }
-        }).len()
-    } else {
-        0
-    };
-
-    // Get the length of the longest package / dependency name.
-    let pad = if pad >= pad_dep { pad } else { pad_dep };
-
-    // Determine the length of the longest version string.
-    let version_pad = pack_toml.iter().fold(
-        &pack_toml[0],
-        |acc, item| {
-            let version_acc = &acc.meta.version;
-            let version_item = &item.meta.version;
-
-            if version_item.len() > version_acc.len() { &item } else { acc }
-        }
-    ).meta.version.len();
-
-    let version_pad_dep = if dep_names.len() > 1 {
-        dep_toml.iter().fold(
-            &dep_toml[0],
-            |acc, item| {
-                let version_acc = &acc.meta.version;
-                let version_item = &item.meta.version;
-
-                if version_item.len() > version_acc.len() { &item } else { acc }
-            }
-        ).meta.version.len()
-    } else if dep_names.len() == 1 {
-        dep_toml[0].meta.version.len()
-    } else {
-        0
-    };
-
-    let version_pad = if version_pad >= version_pad_dep { version_pad } else { version_pad_dep };
-    let real_pad = pad;
-
-    // Still calculating padding: compare the previous name and version lengths
-    // to the lengths of the name and version headings, and pick the longest
-    // one. This lets us display package names and versions in a neat table.
-    let name_header = format!("Package ({})", packs.len() + dep_names.len());
-    let version_header = "Version";
-
-    let pad = if pad < name_header.len() + 3 {
-        name_header.len() + 3
-    } else {
-        pad + 3
-    };
-
-    let version_pad = if version_pad < version_header.len() + 3 {
-        version_header.len() + 3
-    } else {
-        version_pad + 3
-    };
-
-    // If any explicit packages are already installed and the latest version,
-    // warn that we are reinstalling.
-    for toml in &pack_toml {
-        if actions::is_installed(&toml.name, &toml.meta.version)? {
-            log::warn(&format!("Package {} is up to date - reinstalling", &toml.name));
-        }
-    }
-
-    // Output the table of package names and versions, with a confirmation prompt.
-    log::info("Building packages:\n");
-    println!("   {: <pad$} {: <version_pad$}", name_header, version_header);
-    eprintln!();
-
-    for toml in &pack_toml {
-        if dep_names.contains(&toml.name) { continue; }
-        println!("   {: <pad$} {: <version_pad$} (explicit)", toml.name, toml.meta.version);
-    }
-
-    for toml in &dep_toml {
-        println!("   {: <pad$} {: <version_pad$} (layer {})", toml.name, toml.meta.version, toml.depth);
-    }
-
-    eprintln!();
-
-    if !args.yes { log::prompt(); }
+    // Output package summary.
+    let (pack_toml, dep_toml, dep_names, real_pad) = actions::summary(packs, args, "Building")?;
 
     // Download all source files.
     log::info("Downloading sources");
@@ -366,15 +271,17 @@ pub fn build(packs: &Vec<String>, args: &args::Cmd) -> Result<()> {
 
 /// Install some packages for which a complete binary tarball is present in the
 /// cache directory.
-pub fn install(packs: &Vec<String>) -> Result<()> {
-    let pack_toml = actions::parse_package(&packs)?;
+pub fn install(packs: &Vec<String>, args: &args::Cmd) -> Result<()> {
+    let (pack_toml, _, _, _) = actions::summary(packs, args, "Installing")?;
     actions::install_all(&pack_toml)?;
     Ok(())
 }
 
 /// Uninstall some packages by removing the files listed in each package's
 /// manifest.
-pub fn remove(packs: &Vec<String>) -> Result<()> {
+pub fn remove(packs: &Vec<String>, args: &args::Cmd) -> Result<()> {
+    let _ = actions::summary(packs, args, "Removing")?;
+
     for pack in packs {
         // Make sure the package is installed.
         if !actions::is_installed(pack, &"*".into())? {
