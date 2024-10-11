@@ -306,11 +306,21 @@ pub fn remove(packs: &Vec<String>, args: &args::Cmd) -> Result<()> {
                 .stderr(Stdio::null())
                 .status();
 
-            let _ = Command::new("rm")
-                .arg(file)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+            if let Some(_) = actions::is_tracked(&file.into())? {
+                if !fs::symlink_metadata(file)?.file_type().is_symlink() {
+                    let _ = Command::new("rm")
+                        .arg(file)
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status();
+                }
+            } else {
+                let _ = Command::new("rm")
+                    .arg(file)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
         }
 
         info_fmt!("{pack} Successfully uninstalled package");

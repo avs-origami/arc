@@ -33,6 +33,7 @@ This is a list of all planned features and their implementation status.
     [x] Install built packages to sysroot
     [x] Remove installed packages
     [x] Build log file
+    [ ] Perform full system upgrade
 
 [x] Package repositories
     [x] Package format
@@ -47,6 +48,13 @@ This is a list of all planned features and their implementation status.
     [x] Progress messages
     [x] Download progress bar
     [x] Optional verbose builds
+    [x] Action summary
+    [x] Confirmation prompts
+
+[-] Other actions
+    [x] Create new package with template
+    [ ] List installed packages
+    [ ] Search for packages
 
 Key:
 
