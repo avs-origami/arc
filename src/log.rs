@@ -1,8 +1,10 @@
 //! This module contains functions to log messages to the terminal with
 //! consistent formatting.
 
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::process::exit;
+
+use anyhow::Result;
 
 /// Log a message with a colored arrow at the beginning.
 pub fn log(msg: &str, color: usize) {
@@ -40,6 +42,15 @@ pub fn die(msg: &str) -> ! {
 pub fn prompt() {
     info("Press Enter to continue or Ctrl+C to abort");
     let _ = io::stdin().read(&mut [0u8]);
+}
+
+/// Ask the user a yes-no question
+pub fn prompt_yn(q: &str) -> Result<bool> {
+    print!("\x1b[35m->\x1b[0m {q} [Y/n] ");
+    io::stdout().flush()?;
+    let mut resp = String::new();
+    io::stdin().read_line(&mut resp)?;
+    return Ok(resp != "n" || resp != "N");
 }
 
 #[macro_export]

@@ -491,7 +491,9 @@ pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
             if let Some(n) = is_tracked(&line.into())? {
                 let other_name = n.split('@').collect::<Vec<&str>>()[0];
                 if fs::metadata(line)?.is_file() && other_name != name {
-                    bail!("Package conflicts found: file {line} is already tracked by package {other_name}");
+                    if ! log::prompt_yn(&format!("\x1b[33m->\x1b[0m WARNING: File {line} is already tracked by package {other_name}; overwrite it?"))? {
+                        bail!("Package conflicts found: file {line} is already tracked by package {other_name}");
+                    }
                 }
             }
         }
