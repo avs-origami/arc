@@ -25,7 +25,7 @@ This is a list of all planned features and their implementation status.
         [x] Copy / extract sources to build dir
     [-] Dependency resolution
         [x] Build / install dependencies in order
-        [ ] Build / install make dependencies
+        [x] Build / install make dependencies
         [ ] Circular dependency checks
         [ ] Provides system
     [-] Conflict resolution

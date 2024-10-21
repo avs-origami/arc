@@ -106,7 +106,9 @@ pub fn parse_package(packs: &Vec<String>) -> Result<Vec<Package>> {
 }
 
 /// Output a pretty summary of packages that will be affected by an action.
-pub fn summary(packs: &Vec<String>, args: &args::Cmd, header: &str) -> Result<(Vec<Package>, Vec<Package>, Vec<String>, usize)> {
+pub fn summary(packs: &Vec<String>, args: &args::Cmd, header: &str) -> Result<(
+    Vec<Package>, Vec<Package>, Vec<String>, Vec<Package>, Vec<String>, usize,
+)> {
     // Parse all explicit packages, getting package TOML and the path for each.
     let pack_toml = parse_package(&packs)?;
 
@@ -116,8 +118,9 @@ pub fn summary(packs: &Vec<String>, args: &args::Cmd, header: &str) -> Result<(V
     }).len();
 
     // Resolve all dependencies, getting package.toml and the path for each.
-    let dep_toml = resolve_deps(&pack_toml, 1)?;
+    let (dep_toml, mkdep_toml) = resolve_deps(&pack_toml, 1)?;
     let dep_names: Vec<String> = dep_toml.iter().map(|x| x.name.clone()).collect();
+    let mkdep_names: Vec<String> = mkdep_toml.iter().map(|x| x.name.clone()).collect();
 
     // Get the length of the longest dependency name.
     let pad_dep = if dep_names.len() > 0 {
@@ -127,6 +130,16 @@ pub fn summary(packs: &Vec<String>, args: &args::Cmd, header: &str) -> Result<(V
     } else {
         0
     };
+
+    let pad_mkdep = if mkdep_names.len() > 0 {
+        mkdep_names.iter().fold(&mkdep_names[0], |acc, item| {
+            if item.len() > acc.len() { &item } else { acc }
+        }).len()
+    } else {
+        0
+    };
+
+    let pad_dep = if pad_dep >= pad_mkdep { pad_dep } else { pad_mkdep };
 
     // Get the length of the longest package / dependency name.
     let pad = if pad >= pad_dep { pad } else { pad_dep };
@@ -158,13 +171,35 @@ pub fn summary(packs: &Vec<String>, args: &args::Cmd, header: &str) -> Result<(V
         0
     };
 
+    let version_pad_mkdep = if mkdep_names.len() > 1 {
+        mkdep_toml.iter().fold(
+            &mkdep_toml[0],
+            |acc, item| {
+                let version_acc = &acc.meta.version;
+                let version_item = &item.meta.version;
+
+                if version_item.len() > version_acc.len() { &item } else { acc }
+            }
+        ).meta.version.len()
+    } else if mkdep_names.len() == 1 {
+        mkdep_toml[0].meta.version.len()
+    } else {
+        0
+    };
+
+    let version_pad_dep = if version_pad_dep >= version_pad_mkdep {
+        version_pad_dep
+    } else {
+        version_pad_mkdep
+    };
+
     let version_pad = if version_pad >= version_pad_dep { version_pad } else { version_pad_dep };
     let real_pad = pad;
 
     // Still calculating padding: compare the previous name and version lengths
     // to the lengths of the name and version headings, and pick the longest
     // one. This lets us display package names and versions in a neat table.
-    let name_header = format!("Package ({})", packs.len() + dep_names.len());
+    let name_header = format!("Package ({})", packs.len() + dep_names.len() + mkdep_names.len());
     let version_header = "Version";
 
     let pad = if pad < name_header.len() + 3 {
@@ -197,15 +232,23 @@ pub fn summary(packs: &Vec<String>, args: &args::Cmd, header: &str) -> Result<(V
         println!("   {: <pad$} {: <version_pad$} (explicit)", toml.name, toml.meta.version);
     }
 
+    if header == "Removing" {
+        println!("\n   These packages were dependencies and may no longer be needed:");
+    }
+
     for toml in &dep_toml {
         println!("   {: <pad$} {: <version_pad$} (layer {})", toml.name, toml.meta.version, toml.depth);
+    }
+
+    for toml in &mkdep_toml {
+        println!("   {: <pad$} {: <version_pad$} (make layer {})", toml.name, toml.meta.version, toml.depth);
     }
 
     eprintln!();
 
     if !args.yes { log::prompt(); }
 
-    Ok((pack_toml, dep_toml, dep_names, real_pad))
+    Ok((pack_toml, dep_toml, dep_names, mkdep_toml, mkdep_names, real_pad))
 }
 
 /// Download sources for each package in a vector, optionally using pre-parsed
@@ -251,8 +294,9 @@ pub fn download_all(
 pub fn resolve_deps(
     pack_toml: &Vec<Package>,
     depth: usize,
-) -> Result<Vec<Package>> {
-    let mut raw_output = vec![];
+) -> Result<(Vec<Package>, Vec<Package>)> {
+    let mut raw_deps = vec![];
+    let mut raw_mkdeps = vec![];
     for toml in pack_toml {
         for (name, ver_req) in &toml.deps {
             // If a satisfactory version of this dependency is installed,
@@ -264,18 +308,67 @@ pub fn resolve_deps(
             dep_toml[0].name = name.clone();
             dep_toml[0].depth = depth;
 
-            // Get dependencies of this dependency, and add everything to the
-            // list of dependencies.
+            // Get dependencies and make dependencies of this dependency, and
+            // add everything to the list of dependencies.
             let mut deps = resolve_deps(&dep_toml, depth + 1)?;
-            raw_output.push(dep_toml.remove(0));
-            raw_output.append(&mut deps);
+            raw_deps.push(dep_toml.remove(0));
+            raw_deps.append(&mut deps.0);
+            raw_mkdeps.append(&mut deps.1);
+        }
+
+        for (name, ver_req) in &toml.mkdeps {
+            // If a satisfactory version of this make dependency is installed,
+            // skip to the next one.
+            if is_installed(name, ver_req)? { continue; }
+
+            // Parse this make dependency and fill out the 'name' and 'depth'
+            // fields.
+            let mut mkdep_toml = parse_package(&vec![name.to_string()])?;
+            mkdep_toml[0].name = name.clone();
+            mkdep_toml[0].depth = depth;
+
+            // Get dependencies and make dependencies of this dependency, and
+            // add everything to the list of dependencies.
+            let mut deps = resolve_deps(&mkdep_toml, depth + 1)?;
+            raw_mkdeps.push(mkdep_toml.remove(0));
+            raw_mkdeps.append(&mut deps.0);
+            raw_mkdeps.append(&mut deps.1);
         }
     }
 
-    let mut output: Vec<Package> = vec![];
-    'o: for i in &raw_output {
+    // Remove duplicate dependencies.
+    let proc_deps = consolidate_deps(&raw_deps);
+    let mut out_mkdeps = consolidate_deps(&raw_mkdeps);
+    
+    // Remove packages from deps if they are in mkdeps.
+    let mut out_deps = vec![];
+    for dep in &proc_deps {
+        let mut duplicate = false;
+        for mkdep in &out_mkdeps {
+            if mkdep.name == dep.name {
+                duplicate = true;
+                break;
+            }
+        }
+
+        if !duplicate {
+            out_deps.push(dep.clone());
+        }
+    }
+
+    // Sort the remaining dependencies by install layer.
+    out_deps.sort_by(|a, b| a.depth.cmp(&b.depth).reverse());
+    out_mkdeps.sort_by(|a, b| a.depth.cmp(&b.depth).reverse());
+    Ok((out_deps, out_mkdeps))
+}
+
+/// Remove duplicate packages from a vector, keeping the copy with the highest
+/// depth.
+pub fn consolidate_deps(input: &Vec<Package>) -> Vec<Package> {
+    let mut out_deps: Vec<Package> = vec![];
+    'o: for i in input {
         // If this is a duplicate, don't add it to the return vector.
-        for j in &output {
+        for j in &out_deps {
             if j.name == i.name {
                 continue 'o;
             }
@@ -284,18 +377,16 @@ pub fn resolve_deps(
         // Find the highest depth of all copies of this dependency, and add
         // the corresponding copy to the result vector.
         let mut pack = i.clone();
-        for j in &raw_output {
+        for j in input {
             if j.name == pack.name && j.depth > pack.depth {
                 pack = j.clone();
             }
         }
 
-        output.push(pack);
+        out_deps.push(pack);
     }
 
-    // Sort the remaining dependencies by install layer.
-    output.sort_by(|a, b| a.depth.cmp(&b.depth).reverse());
-    Ok(output)
+    return out_deps;
 }
 
 /// Verify checksums for some packages given their parsed TOML data.

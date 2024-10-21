@@ -177,7 +177,7 @@ pub fn sync() -> Result<()> {
                     "   <> ",
                     "  <>  ",
                     " <>   ",
-                    "<<<>>>",
+                    "------",
                 ]),
         );
 
@@ -212,21 +212,54 @@ pub fn sync() -> Result<()> {
 /// 7. Prompt to install remaining explicit packages.
 pub fn build(packs: &Vec<String>, args: &args::Cmd) -> Result<()> {
     // Output package summary.
-    let (pack_toml, dep_toml, dep_names, real_pad) = actions::summary(packs, args, "Building")?;
+    let (pack_toml, dep_toml, dep_names, mkdep_toml, mkdep_names, real_pad) = actions::summary(packs, args, "Building")?;
 
     // Download all source files.
     log::info("Downloading sources");
     let pack_toml = actions::download_all(packs, Some(pack_toml), false, Some(real_pad))?;
     let dep_toml = actions::download_all(&dep_names, Some(dep_toml), false, Some(real_pad))?;
+    let mkdep_toml = actions::download_all(&mkdep_names, Some(mkdep_toml), false, Some(real_pad))?;
     eprintln!();
 
     // Verify checksums for all the source files.
     log::info("Verifying checksums");
     actions::checksums_all(&pack_toml, real_pad)?;
     actions::checksums_all(&dep_toml, real_pad)?;
+    actions::checksums_all(&dep_toml, real_pad)?;
     eprintln!();
 
-    // If we have any dependencies, build and install them first.
+    // If we have any make dependencies, build and install them first.
+    if mkdep_toml.len() > 0 {
+        // All the dependency data is sorted by layer. Determine on which
+        // indices the data must be split to separate the packages based
+        // on layer.
+        let mut layer_idxs = vec![];
+        let mut depth = mkdep_toml[0].depth;
+        let mut prev_idx = 0;
+        for (i, pack) in mkdep_toml.iter().enumerate() {
+            if pack.depth < depth {
+                layer_idxs.push((prev_idx, i));
+                depth = pack.depth;
+                prev_idx = i;
+            }
+        }
+
+        layer_idxs.push((prev_idx, mkdep_toml.len()));
+
+        // Build and install the dependencies, one layer at a time.
+        for idx in &layer_idxs {
+            actions::build_all(
+                &mkdep_toml[idx.0..idx.1].to_vec(),
+                args,
+            )?;
+
+            info_fmt!("Installing layer {} make dependencies", mkdep_toml[idx.0].depth);
+            actions::install_all(&mkdep_toml[idx.0..idx.1].to_vec())?;
+            eprintln!();
+        }
+    }
+
+    // If we have any dependencies, build and install them next.
     if dep_toml.len() > 0 {
         // All the dependency data is sorted by layer. Determine on which
         // indices the data must be split to separate the packages based
@@ -272,7 +305,7 @@ pub fn build(packs: &Vec<String>, args: &args::Cmd) -> Result<()> {
 /// Install some packages for which a complete binary tarball is present in the
 /// cache directory.
 pub fn install(packs: &Vec<String>, args: &args::Cmd) -> Result<()> {
-    let (pack_toml, _, _, _) = actions::summary(packs, args, "Installing")?;
+    let (pack_toml, _, _, _, _, _) = actions::summary(packs, args, "Installing")?;
     actions::install_all(&pack_toml)?;
     Ok(())
 }
