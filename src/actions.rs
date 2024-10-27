@@ -41,6 +41,7 @@ pub struct PackMeta {
     pub maintainer: String,
     pub sources: Vec<String>,
     pub checksums: Vec<String>,
+    pub strip: Option<bool>,
 }
 
 /// Check if a specific version of a package is installed.
@@ -504,14 +505,18 @@ pub fn build_all(
         }
         
         // Strip unneeded symbols from binaries to reduce the package size.
-        info_fmt!("\x1b[36m{}\x1b[0m Stripping binaries", name);
-        for file in glob(&format!("{dest_dir}/**/*"))? {
-            let path = format!("{}", file?.display());
-            let _ = Command::new("strip")
-                .args(["--strip-unneeded", &path])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+        if toml.meta.strip.unwrap_or(true) {
+            info_fmt!("\x1b[36m{}\x1b[0m Stripping binaries", name);
+            for file in glob(&format!("{dest_dir}/**/*"))? {
+                let path = format!("{}", file?.display());
+                let _ = Command::new("strip")
+                    .args(["--strip-unneeded", &path])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+        } else {
+            info_fmt!("\x1b[36m{}\x1b[0m Not stripping (explicitly disabled)", name);
         }
  
         // Create the package manifest at
