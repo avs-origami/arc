@@ -15,6 +15,7 @@ use lazy_static::lazy_static;
 
 pub mod args;
 pub mod actions;
+pub mod bars;
 pub mod log;
 pub mod util;
 
@@ -165,21 +166,7 @@ pub fn sync() -> Result<()> {
 
         let sp = ProgressBar::new_spinner();
         sp.enable_steady_tick(Duration::from_millis(75));
-        sp.set_style(
-            ProgressStyle::with_template(&bar_fmt)
-                .unwrap()
-                .tick_strings(&[
-                    "<>    ",
-                    " <>   ",
-                    "  <>  ",
-                    "   <> ",
-                    "    <>",
-                    "   <> ",
-                    "  <>  ",
-                    " <>   ",
-                    "------",
-                ]),
-        );
+        sp.set_style(ProgressStyle::with_template(&bar_fmt).unwrap().tick_strings(&bars::SPIN));
 
         Command::new("git")
             .arg("pull")

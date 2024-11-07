@@ -2,6 +2,8 @@
 
 use std::io::{Read, Write};
 
+use indicatif::{ProgressBar, ProgressStyle};
+
 /// Write data from a stream to two different outputs concurrently.
 pub fn tee(
     mut stream: impl Read,
@@ -21,4 +23,10 @@ pub fn tee(
     }
 
     Ok(())
+}
+
+/// Change to bar if not already, and increment a status bar.
+pub fn inc_bar(bar: &ProgressBar, amt: u64, style: &ProgressStyle) {
+    bar.set_style(style.clone());
+    bar.inc(amt)
 }

@@ -7,6 +7,7 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use glob::glob;
@@ -17,6 +18,7 @@ use serde::Deserialize;
 
 use crate::{info_fmt, info_ident_fmt, ARC_PATH, CACHE};
 use crate::args;
+use crate::bars;
 use crate::log;
 use crate::util;
 
@@ -687,21 +689,26 @@ pub fn download_one(
 
         if url.starts_with("https://") || url.starts_with("http://") {
             // This is a remote url, so download it from the internet.
+            // Create a pretty download progress bar.
+            let bar = "[{elapsed_precise}] [{bar:30.magenta/magenta}] ({bytes_per_sec}, ETA {eta})";
+            let bar_spin = "[{elapsed_precise}] [{spinner:.magenta}] ({bytes_per_sec}, ETA {eta})";
+            let bar_fmt = format!("  \x1b[35m->\x1b[0m \x1b[36m{name: <pad$}\x1b[0m {bar} ({}/{}) ({og_url})", i + 1, urls.len());
+            let bar_spin_fmt = format!("  \x1b[35m->\x1b[0m \x1b[36m{name: <pad$}\x1b[0m {bar_spin} ({}/{}) ({og_url})", i + 1, urls.len());
+
+            let bar = ProgressBar::new(1);
+            let bar_style = ProgressStyle::with_template(&bar_fmt).unwrap().progress_chars("-> ");
+            bar.set_style(ProgressStyle::with_template(&bar_spin_fmt).unwrap().tick_strings(&bars::LSPIN));
+            bar.enable_steady_tick(Duration::from_millis(30));
+            
             loop {
                 let mut body = vec![];
                 // Get the size of the file to be downloaded, if available.
                 let head = request::head(&url)?;
                 let len = head.content_len().unwrap_or(0);
-
-                // Create a pretty download progress bar.
-                let bar = "[{elapsed_precise}] [{bar:30.magenta/magenta}] ({bytes_per_sec}, ETA {eta})";
-                let bar_fmt = format!("  \x1b[35m->\x1b[0m \x1b[36m{name: <pad$}\x1b[0m {bar} ({}/{}) ({og_url})", i + 1, urls.len());
-
-                let bar = ProgressBar::new(len as u64);
-                bar.set_style(ProgressStyle::with_template(&bar_fmt).unwrap().progress_chars("-> "));
+                bar.set_length(len as u64);
 
                 // Try to download the file.
-                let res = request::get_with_update(&url, &mut body, |x| bar.inc(x as u64))
+                let res = request::get_with_update(&url, &mut body, |x| util::inc_bar(&bar, x as u64, &bar_style))
                     .context(format!("Couldn't connect to {url}"))?;
 
                 if res.status_code().is_success() {
