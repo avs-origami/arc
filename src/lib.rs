@@ -118,6 +118,16 @@ pub fn purge_cache() -> Result<()> {
     Ok(())
 }
 
+/// List installed packages, one per line.
+pub fn list() -> Result<()> {
+    let installed = glob::glob("/var/cache/arc/installed/*")?;
+    for pkg in installed {
+        info_fmt!("{}", &pkg?.display().to_string().split('/').last().unwrap());
+    }
+
+    Ok(())
+}
+
 /// Download the source files for some packages, even if they already exist.
 pub fn download(packs: &Vec<String>) -> Result<()> {
     log::info("Downloading sources");

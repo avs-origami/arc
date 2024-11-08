@@ -7,6 +7,7 @@ pub enum Op {
     Die(i32),
     Download(Vec<String>),
     Install(Vec<String>),
+    List,
     New(String),
     Purge,
     Remove(Vec<String>),
@@ -60,6 +61,9 @@ pub fn parse(args: &mut Vec<String>) -> Cmd {
                 } else {
                     break Op::Die(1);
                 }
+            },
+            "l" | "list" => {
+                break Op::List;
             },
             "n" | "new" => {
                 if args.len() > 2 {

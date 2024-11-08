@@ -40,6 +40,7 @@ fn main() {
         Op::Die(x) => arc::print_help(x),
         Op::Download(ref x) => arc::download(x),
         Op::Install(ref x) => arc::install(x, &parsed),
+        Op::List => arc::list(),
         Op::New(x) => arc::new(x),
         Op::Purge => arc::purge_cache(),
         Op::Remove(ref x) => arc::remove(x, &parsed),

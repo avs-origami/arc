@@ -54,7 +54,7 @@ This is a list of all planned features and their implementation status.
 
 [-] Other actions
     [x] Create new package with template
-    [ ] List installed packages
+    [x] List installed packages
     [ ] Search for packages
 
 Key:
