@@ -44,6 +44,7 @@ fn main() {
         Op::New(x) => arc::new(x),
         Op::Purge => arc::purge_cache(),
         Op::Remove(ref x) => arc::remove(x, &parsed),
+        Op::Upgrade => arc::upgrade(&parsed),
         Op::Version => arc::version(),
     };
 

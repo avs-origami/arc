@@ -11,6 +11,7 @@ pub enum Op {
     New(String),
     Purge,
     Remove(Vec<String>),
+    Upgrade,
     Version,
 }
 
@@ -62,9 +63,6 @@ pub fn parse(args: &mut Vec<String>) -> Cmd {
                     break Op::Die(1);
                 }
             },
-            "l" | "list" => {
-                break Op::List;
-            },
             "n" | "new" => {
                 if args.len() > 2 {
                     break Op::New(args[2].clone());
@@ -79,7 +77,9 @@ pub fn parse(args: &mut Vec<String>) -> Cmd {
                     break Op::Die(1);
                 }
             },
+            "l" | "list" => break Op::List,
             "p" | "purge" => break Op::Purge,
+            "u" | "upgrade" => break Op::Upgrade,
             "v" | "version" => break Op::Version,
             "h" | "help" => break Op::Die(0),
             x => {

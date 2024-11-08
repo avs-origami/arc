@@ -193,6 +193,32 @@ pub fn sync() -> Result<()> {
     Ok(())
 }
 
+/// Perform a full system upgrade (update packages that have available updates).
+pub fn upgrade(args: &args::Cmd) -> Result<()> {
+    log::info("Performing full system upgrade.");
+    let installed = glob::glob("/var/cache/arc/installed/*")?;
+    let mut packs = vec![];
+
+    for pkg in installed {
+        let name = pkg?.display().to_string();
+        let basename = name.split('/').last().unwrap();
+        let name_no_ver = basename.split('@').nth(0).unwrap().to_string();
+        let parsed = actions::parse_package(&vec![name_no_ver])?[0].clone();
+
+        if ! actions::is_installed(&parsed.name, &parsed.meta.version)? {
+            packs.push(parsed.name);
+        }
+    }
+
+    if packs.len() > 0 {
+        build(&packs, args)?;
+    } else {
+        log::info("All packages up to date. Congratulations!");
+    }
+
+    Ok(())
+}
+
 /// Build some packages. This does the following steps:
 /// 1. Resolve dependencies of each package, and determine which layer
 ///    to install each.
