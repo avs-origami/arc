@@ -1,13 +1,13 @@
 |---------------------------|
-| ARC                       |      .---.
-|---------------------------|     /\  \ \   ___ ____
-| A tiny package manager    |    /  \ -\ \_/__ / __/
-| written in Rust.          |   / / /\  \ \  \_\ |__.
-|---------------------------|  /__./  \.___\    \___/
+| ARC                       |          _____              .---.
+|---------------------------|  @_@    /  __ \ __,  ____  /\  \ \   ___ ____
+| A tiny package manager    |  \  \__/ ,'z i \/   ____  /  \ -\ \_/__ / __/
+| written in Rust.          |   7  \ \ i  ^' /  ____   / / /\  \ \  \_\ |__.
+|---------------------------|    \__________/ ____    /__./  \.___\    \___/
 =~=~=~=~=~=~=~=~=~=~=~=~=~=~=
 
-Arc is a tiny package manager written in Rust, inspired by Kiss, and the
-successor to my previous project, YPM (https://github.com/avs-origami/ypm).
+Arc is a tiny, lightning-fast package manager written in Rust, inspired by Kiss,
+and the successor to my previous package manager adventure.
 
 === Building
 ============
