@@ -6,6 +6,7 @@ pub enum Op {
     Checksum,
     Die(i32),
     Download(Vec<String>),
+    Find(String),
     Install(Vec<String>),
     List,
     New(String),
@@ -52,6 +53,13 @@ pub fn parse(args: &mut Vec<String>) -> Cmd {
             "d" | "download" => {
                 if args.len() > 2 {
                     break Op::Download(args[2..].to_vec());
+                } else {
+                    break Op::Die(1);
+                }
+            },
+            "f" | "find" => {
+                if args.len() > 2 {
+                    break Op::Find(args[2].clone());
                 } else {
                     break Op::Die(1);
                 }

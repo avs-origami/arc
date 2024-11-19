@@ -1,9 +1,9 @@
 |---------------------------|
-| ARC                       |          _____              .---.
-|---------------------------|  @_@    /  __ \ __,  ____  /\  \ \   ___ ____
-| A tiny package manager    |  \  \__/ ,'z i \/   ____  /  \ -\ \_/__ / __/
-| written in Rust.          |   7  \ \ i  ^' /  ____   / / /\  \ \  \_\ |__.
-|---------------------------|    \__________/ ____    /__./  \.___\    \___/
+| ARC                       |          _____               .---.
+|---------------------------|  @_@    /  __ \ __,  ____   /\  \ \   ___ ____
+| A tiny package manager    |  \  \__/ ,'z i \/   ____   /  \ -\ \_/__ / __/
+| written in Rust.          |   7  \ \ i  ^' /  _____   / / /\  \ \  \_\ |__.
+|---------------------------|    \__________/ ______   /__./  \.___\    \___/
 =~=~=~=~=~=~=~=~=~=~=~=~=~=~=
 
 Arc is a tiny, lightning-fast package manager written in Rust, inspired by Kiss,
@@ -52,10 +52,10 @@ This is a list of all planned features and their implementation status.
     [x] Action summary
     [x] Confirmation prompts
 
-[-] Other actions
+[x] Other actions
     [x] Create new package with template
     [x] List installed packages
-    [ ] Search for packages
+    [x] Search for packages
 
 Key:
 
@@ -67,3 +67,9 @@ Key:
 ================
 
 Issues and pull requests are welcome.
+
+
+=== Mascot
+==========
+
+Why the snail? https://en.wikipedia.org/wiki/Turbo_(2013_film)

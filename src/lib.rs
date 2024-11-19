@@ -54,10 +54,11 @@ pub fn print_help(code: i32) -> ! {
     eprintln!(" \x1b[35m/ / /\\  \\ \\  \x1b[33m\\_\x1b[36m\\ |__.");
     eprintln!("\x1b[35m/__./  \\.___\\    \x1b[36m\\___/");
     eprintln!("\x1b[0m");
-    eprintln!("Usage: \x1b[33marc\x1b[0m [s/v/y][b/c/d/h/i/l/n/p/r/s/u/v] [pkg]...");
+    eprintln!("Usage: \x1b[33marc\x1b[0m [s/v/y][b/c/d/f/h/i/l/n/p/r/s/u/v] [pkg]...");
     log::info_ident("b / build     Build packages");
     log::info_ident("c / checksum  Generate checksums");
     log::info_ident("d / download  Download sources");
+    log::info_ident("f / find      Fuzzy search for a package");
     log::info_ident("h / help      Print this help");
     log::info_ident("i / install   Install built packages");
     log::info_ident("l / list      List installed packages");
@@ -86,7 +87,7 @@ pub fn version() -> ! {
 ///
 /// <name>
 /// |--- package.toml
-/// '--- build (executable)
+/// `--- build (executable)
 ///
 pub fn new(name: String) -> Result<()> {
     // Create the package directory, which will contain 'package.toml' and 'build'.
@@ -214,6 +215,22 @@ pub fn upgrade(args: &args::Cmd) -> Result<()> {
         build(&packs, args)?;
     } else {
         log::info("All packages up to date. Congratulations!");
+    }
+
+    Ok(())
+}
+
+pub fn search(name: String) -> Result<()> {
+    for dir in &*ARC_PATH {
+        for pkg in fs::read_dir(dir)? {
+            let pkg = pkg?;
+            let pkg = pkg.file_name();
+            let pkg = pkg.to_str().unwrap();
+            if pkg.contains(&name) &&! pkg.starts_with(".") {
+                let meta = actions::parse_package(&vec![pkg.into()])?;
+                info_fmt!("{} @ {}", pkg, meta[0].meta.version);
+            }
+        }
     }
 
     Ok(())

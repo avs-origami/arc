@@ -39,6 +39,7 @@ fn main() {
         Op::Checksum => arc::generate_checksums(),
         Op::Die(x) => arc::print_help(x),
         Op::Download(ref x) => arc::download(x),
+        Op::Find(x) => arc::search(x),
         Op::Install(ref x) => arc::install(x, &parsed),
         Op::List => arc::list(),
         Op::New(x) => arc::new(x),
