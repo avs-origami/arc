@@ -223,12 +223,14 @@ pub fn upgrade(args: &args::Cmd) -> Result<()> {
 pub fn search(name: String) -> Result<()> {
     for dir in &*ARC_PATH {
         for pkg in fs::read_dir(dir)? {
-            let pkg = pkg?;
+            let pkg = pkg?; 
             let pkg = pkg.file_name();
             let pkg = pkg.to_str().unwrap();
             if pkg.contains(&name) &&! pkg.starts_with(".") {
-                let meta = actions::parse_package(&vec![pkg.into()])?;
-                info_fmt!("{} @ {}", pkg, meta[0].meta.version);
+                let meta = actions::parse_package(&vec![pkg.into()]);
+                if let Ok(x) = meta {
+                    info_fmt!("{} @ {}", pkg, x[0].meta.version);
+                }
             }
         }
     }
