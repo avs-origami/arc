@@ -327,8 +327,10 @@ pub fn build(packs: &Vec<String>, args: &args::Cmd) -> Result<()> {
             )?;
 
             info_fmt!("Installing layer {} dependencies", dep_toml[idx.0].depth);
-            actions::install_all(&dep_toml[idx.0..idx.1].to_vec())?;
-            eprintln!();
+            for inst in &dep_toml[idx.0..idx.1] {
+                actions::install_all(&vec![inst.clone()])?;
+                eprintln!();
+            }
         }
     }
 

@@ -45,12 +45,13 @@ pub fn prompt() {
 }
 
 /// Ask the user a yes-no question
-pub fn prompt_yn(q: &str) -> Result<bool> {
-    print!("\x1b[35m->\x1b[0m {q} [Y/n] ");
+pub fn prompt_yn(q: &str, col: usize) -> Result<bool> {
+    print!("\x1b[{col}m->\x1b[0m {q} [Y/n] ");
     io::stdout().flush()?;
     let mut resp = String::new();
     io::stdin().read_line(&mut resp)?;
-    return Ok(resp != "n" || resp != "N");
+    let res = !(resp.starts_with("n") || resp.starts_with("N"));
+    return Ok(res);
 }
 
 #[macro_export]

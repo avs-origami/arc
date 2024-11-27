@@ -27,6 +27,7 @@ pub struct Package {
     pub meta: PackMeta,
     pub deps: HashMap<String, String>,
     pub mkdeps: HashMap<String, String>,
+    pub provides: Option<HashMap<String, String>>,
     #[serde(skip)]
     pub name: String,
     #[serde(skip)]
@@ -568,29 +569,50 @@ pub fn build_all(
 /// 2. Extract the manifest 
 /// 3. Extract the binary tarball to /.
 pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
-    log::info("Checking for conflicts");
-
     for toml in pack_toml {
         let name = &toml.name;
         let version = &toml.meta.version;
         let bin_file = format!("{}/bin/{name}@{version}.tar.gz", *CACHE);
         let manifest = format!("./var/cache/arc/installed/{name}@{version}");
-        let tmp_dir = format!("{}/tmp", *CACHE);
+        let tmp_dir = format!("{}/tmp/{name}", *CACHE);
 
         fs::create_dir_all(&tmp_dir).context(format!("Couldn't create temp dir {tmp_dir}"))?;
 
         Command::new("tar")
-            .args(["xf", &bin_file, "-C", &tmp_dir, &manifest])
+            .args(["xf", &bin_file, "-C", &tmp_dir])
             .status()
-            .context(format!("Couldn't extract manifest from binary tarball"))?;
+            .context(format!("Couldn't extract binary tarball to temp dir"))?;
 
-        let manifest_content = fs::read_to_string(format!("{tmp_dir}/{manifest}"))?;
+        log::info("Checking for conflicts");
+        let manifest_content = fs::read_to_string(format!("{tmp_dir}/{manifest}")).context(format!("Couldn't read manifest at {tmp_dir}/{manifest}"))?;
         for line in manifest_content.lines() {
             if let Some(n) = is_tracked(&line.into())? {
                 let other_name = n.split('@').collect::<Vec<&str>>()[0];
                 if fs::metadata(line)?.is_file() && other_name != name {
-                    if ! log::prompt_yn(&format!("\x1b[33m->\x1b[0m WARNING: File {line} is already tracked by package {other_name}; overwrite it?"))? {
-                        bail!("Package conflicts found: file {line} is already tracked by package {other_name}");
+                    if log::prompt_yn(&format!("WARNING: File {line} is already tracked by package {other_name}; overwrite it?"), 33)? {
+                        // If the user chooses to use the file from this package, remove the entry
+                        // for that file from the other package's manifest.
+                        let mut other_manifest = fs::read_to_string(&format!("/var/cache/arc/installed/{n}"))
+                            .context(format!("Couldn't read /var/cache/arc/installed/{n}"))?;
+
+                        other_manifest = other_manifest.replace(&(line.to_owned() + "\n"), "");
+                        
+                        let mut other = File::create(format!("{tmp_dir}/var/cache/arc/installed/{n}"))
+                            .context(format!("Couldn't create file {tmp_dir}/var/cache/arc/installed/{n}"))?;
+
+                        other.write_all(other_manifest.as_bytes()).context("Couldn't write new manifest")?;
+                    } else {
+                        // If the user doesn't want to replace the file, remove the file from the
+                        // temp dir and the packge's manifest.
+                        fs::remove_file(format!("{tmp_dir}/{line}")).context(format!("Couldn't remove file {tmp_dir}/{line}"))?;
+                        
+                        let new_content = fs::read_to_string(format!("{tmp_dir}/{manifest}")).context(format!("Couldn't read manifest at {tmp_dir}/{manifest}"))?;
+                        let new_manifest = new_content.replace(&(line.to_owned() + "\n"), "");
+                        
+                        let mut this_manifest = File::create(format!("{tmp_dir}/{manifest}"))
+                            .context(format!("Couldn't create file {tmp_dir}/var/cache/arc/installed/{n}"))?;
+
+                        this_manifest.write_all(new_manifest.as_bytes()).context("Couldn't write new manifest")?;
                     }
                 }
             }
@@ -602,51 +624,72 @@ pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
         "sudo"
     } else if fs::metadata("bin/doas").is_ok() {
         "doas"
-    } else if fs::metadata("/bin/su").is_ok() {
-        "su"
+    } else if fs::metadata("/bin/ssu").is_ok() {
+        "ssu"
     } else {
         ""
     };
 
     if ! Uid::effective().is_root() {
-        log::info("Using sudo to become root.");
+        info_fmt!("Using {} to become root", su_command);
     }
 
     for (i, toml) in pack_toml.iter().enumerate() {
         let name = &toml.name;
         let version = &toml.meta.version;
-        let bin_file = format!("{}/bin/{name}@{version}.tar.gz", *CACHE);
+        let tmp_dir = format!("{}/tmp/{name}", *CACHE);
 
         if Uid::effective().is_root() {
-            Command::new("tar")
-                .args(["xf", &bin_file, "-C", "/"])
+            Command::new("cp")
+                .args(["-R", &tmp_dir, "/"])
                 .status()
-                .context(format!("Couldn't extract {bin_file} to /"))?;
+                .context(format!("Couldn't install {name} to /"))?;
         } else {
             match su_command {
                 "sudo" => {
                     Command::new("sudo")
-                        .args(["tar", "xf", &bin_file, "-C", "/"])
+                        .args(["chown", "-R", "root:root", &tmp_dir])
                         .status()
-                        .context(format!("Couldn't extract {bin_file} to /"))?;
+                        .context(format!("Couldn't change ownership of package files"))?;
+
+                    Command::new("sudo")
+                        .args(["cp", "-R", &format!("{tmp_dir}/."), "/"])
+                        .status()
+                        .context(format!("Couldn't install {name} to /"))?;
                 },
                 "doas" => {
                     Command::new("doas")
-                        .args(["tar", "xf", &bin_file, "-C", "/"])
+                        .args(["chown", "-R", "root:root", &tmp_dir])
                         .status()
-                        .context(format!("Couldn't extract {bin_file} to /"))?;
+                        .context(format!("Couldn't change ownership of package files"))?;
+
+                    Command::new("doas")
+                        .args(["cp", "-R", &format!("{tmp_dir}/."), "/"])
+                        .status()
+                        .context(format!("Couldn't install {name} to /"))?;
                 },
                 "su" => {
-                    Command::new("su")
-                        .args(["-c", "tar", "xf", &bin_file, "-C", "/"])
+                    Command::new("ssu")
+                        .args(["--", "chown", "-R", "root:root", &tmp_dir])
                         .status()
-                        .context(format!("Couldn't extract {bin_file} to /"))?;
+                        .context(format!("Couldn't change ownership of package files"))?;
+
+                    Command::new("ssu")
+                        .args(["--", "cp", "-R", &format!("{tmp_dir}/."), "/"])
+                        .status()
+                        .context(format!("Couldn't install {name} to /"))?;
                 },
                 _ => bail!("Couldn't find a command to elevate privileges"),
             }
         }
 
         info_fmt!("Successfully installed {} @ {} ({}/{})", name, version, i + 1, pack_toml.len());
+
+        // Remove the temp dir.
+        Command::new(su_command)
+            .args(["rm", "-rf", &tmp_dir])
+            .status()
+            .context(format!("Couldn't remove temp dir {tmp_dir}"))?;
     }
  
     Ok(())

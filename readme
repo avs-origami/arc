@@ -28,7 +28,7 @@ This is a list of all planned features and their implementation status.
         [x] Build / install make dependencies
         [ ] Circular dependency checks
         [ ] Provides system
-    [-] Conflict resolution
+    [x] Conflict resolution
     [x] Build packages and install to destdir
     [x] Strip binaries
     [x] Install built packages to sysroot
@@ -56,6 +56,8 @@ This is a list of all planned features and their implementation status.
     [x] Create new package with template
     [x] List installed packages
     [x] Search for packages
+
+[ ] Configuration file
 
 Key:
 
