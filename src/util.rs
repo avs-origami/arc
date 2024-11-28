@@ -26,7 +26,10 @@ pub fn tee(
 }
 
 /// Change to bar if not already, and increment a status bar.
-pub fn inc_bar(bar: &ProgressBar, amt: u64, style: &ProgressStyle) {
-    bar.set_style(style.clone());
-    bar.inc(amt)
+pub fn inc_bar(bar: &ProgressBar, amt: u64, len: usize, style: &ProgressStyle) {
+    if len > 0 {
+        bar.set_length(len as u64);
+        bar.set_style(style.clone());
+        bar.inc(amt)
+    }
 }

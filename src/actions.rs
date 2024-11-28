@@ -752,10 +752,9 @@ pub fn download_one(
                 // Get the size of the file to be downloaded, if available.
                 let head = request::head(&url)?;
                 let len = head.content_len().unwrap_or(0);
-                bar.set_length(len as u64);
 
                 // Try to download the file.
-                let res = request::get_with_update(&url, &mut body, |x| util::inc_bar(&bar, x as u64, &bar_style))
+                let res = request::get_with_update(&url, &mut body, |x| util::inc_bar(&bar, x as u64, len, &bar_style))
                     .context(format!("Couldn't connect to {url}"))?;
 
                 if res.status_code().is_success() {
@@ -764,14 +763,11 @@ pub fn download_one(
                     bar.finish();
                     eprintln!();
                     let mut out = File::create(&filename).context(format!("Couldn't create file {filename}"))?;
-                    out.write_all(&body)
-                        .context(format!("Couldn't save downloaded file to {filename}"))?;
-
+                    out.write_all(&body).context(format!("Couldn't save downloaded file to {filename}"))?;
                     break;
                 } else if res.status_code().is_redirect() {
                     // The request returned a redirect, get the actual
                     // file location and update the url.
-                    bar.finish_and_clear();
                     url = res.headers().get("Location").unwrap().to_owned();
                 } else {
                     // The request returned a different failure code, bail.
