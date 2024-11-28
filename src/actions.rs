@@ -641,9 +641,12 @@ pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
 
         if Uid::effective().is_root() {
             Command::new("cp")
-                .args(["-R", &tmp_dir, "/"])
+                .args(["-R", &format!("{tmp_dir}/."), "/"])
                 .status()
                 .context(format!("Couldn't install {name} to /"))?;
+
+            // Remove the temp dir.
+            fs::remove_dir_all(&tmp_dir).context(format!("Couldn't remove temp dir {tmp_dir}"))?;
         } else {
             match su_command {
                 "sudo" => {
@@ -681,15 +684,16 @@ pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
                 },
                 _ => bail!("Couldn't find a command to elevate privileges"),
             }
+
+            // Remove the temp dir.
+            Command::new(su_command)
+                .args(["rm", "-rf", &tmp_dir])
+                .status()
+                .context(format!("Couldn't remove temp dir {tmp_dir}"))?;
+
         }
 
         info_fmt!("Successfully installed {} @ {} ({}/{})", name, version, i + 1, pack_toml.len());
-
-        // Remove the temp dir.
-        Command::new(su_command)
-            .args(["rm", "-rf", &tmp_dir])
-            .status()
-            .context(format!("Couldn't remove temp dir {tmp_dir}"))?;
     }
  
     Ok(())
