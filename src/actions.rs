@@ -622,7 +622,7 @@ pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
 
     let su_command = if fs::metadata("/bin/sudo").is_ok() {
         "sudo"
-    } else if fs::metadata("bin/doas").is_ok() {
+    } else if fs::metadata("/bin/doas").is_ok() {
         "doas"
     } else if fs::metadata("/bin/ssu").is_ok() {
         "ssu"
@@ -639,9 +639,17 @@ pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
         let version = &toml.meta.version;
         let tmp_dir = format!("{}/tmp/{name}", *CACHE);
 
+        let install_dirs = format!("find {tmp_dir}/. -type d -exec sh -c 'mkdir -p /${{0#{tmp_dir}}}' {{}} \\;");
+        let install_files = format!("find {tmp_dir}/. -type f -exec sh -c 'cp $0 /${{0#{tmp_dir}}}' {{}} \\;");
+
         if Uid::effective().is_root() {
-            Command::new("cp")
-                .args(["-R", &format!("{tmp_dir}/."), "/"])
+            Command::new("sh")
+                .args(["-c", &install_dirs])
+                .status()
+                .context(format!("Couldn't install {name} to /"))?;
+
+            Command::new("sh")
+                .args(["-c", &install_files])
                 .status()
                 .context(format!("Couldn't install {name} to /"))?;
 
@@ -656,9 +664,14 @@ pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
                         .context(format!("Couldn't change ownership of package files"))?;
 
                     Command::new("sudo")
-                        .args(["cp", "-R", &format!("{tmp_dir}/."), "/"])
+                        .args(["sh", "-c", &install_dirs])
                         .status()
                         .context(format!("Couldn't install {name} to /"))?;
+
+                    Command::new("sudo")
+                        .args(["sh", "-c", &install_files])
+                        .status()
+                    .context(format!("Couldn't install {name} to /"))?;
                 },
                 "doas" => {
                     Command::new("doas")
@@ -667,20 +680,30 @@ pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
                         .context(format!("Couldn't change ownership of package files"))?;
 
                     Command::new("doas")
-                        .args(["cp", "-R", &format!("{tmp_dir}/."), "/"])
+                        .args(["sh", "-c", &install_dirs])
                         .status()
                         .context(format!("Couldn't install {name} to /"))?;
+
+                    Command::new("doas")
+                        .args(["sh", "-c", &install_files])
+                        .status()
+                    .context(format!("Couldn't install {name} to /"))?;
                 },
-                "su" => {
+                "ssu" => {
                     Command::new("ssu")
                         .args(["--", "chown", "-R", "root:root", &tmp_dir])
                         .status()
                         .context(format!("Couldn't change ownership of package files"))?;
 
                     Command::new("ssu")
-                        .args(["--", "cp", "-R", &format!("{tmp_dir}/."), "/"])
+                        .args(["--", "sh", "-c", &install_dirs])
                         .status()
                         .context(format!("Couldn't install {name} to /"))?;
+
+                    Command::new("ssu")
+                        .args(["--", "sh", "-c", &install_files])
+                        .status()
+                    .context(format!("Couldn't install {name} to /"))?;
                 },
                 _ => bail!("Couldn't find a command to elevate privileges"),
             }
