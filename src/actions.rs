@@ -428,8 +428,9 @@ pub fn build_all(
         info_fmt!("\x1b[36m{}\x1b[0m Building package ({}/{})", name, i + 1, pack_toml.len());
 
         // Create cache directories for src and destdir.
-        let src_dir = format!("{}/build/{name}/src", *CACHE);
-        let dest_dir = format!("{}/build/{name}/dest", *CACHE);
+        let build_dir = format!("{}/build/{name}", *CACHE);
+        let src_dir = format!("{build_dir}/src");
+        let dest_dir = format!("{build_dir}/dest");
         fs::create_dir_all(&src_dir).context(format!("Couldn't create directory {src_dir}"))?;
         fs::create_dir_all(&dest_dir).context(format!("Couldn't create directory {dest_dir}"))?;
 
@@ -556,6 +557,9 @@ pub fn build_all(
             .current_dir(&dest_dir)
             .status()
             .context("Couldn't create tarball of built package")?;
+
+        info_fmt!("\x1b[36m{}\x1b[0m Cleaning up", name);
+        fs::remove_dir_all(&build_dir).context(format!("Couldn't remove build directory {build_dir}"))?;
 
         eprintln!();
     }
