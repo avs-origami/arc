@@ -13,6 +13,7 @@ and the successor to my previous package manager adventure.
 ============
 
 Just run 'cargo build --release' and copy 'target/release/arc' to your bin dir.
+Also copy 'arc.toml' to '/etc/arc.toml' and edit as necessary.
 
 === Progress
 ============
@@ -57,7 +58,7 @@ This is a list of all planned features and their implementation status.
     [x] List installed packages
     [x] Search for packages
 
-[ ] Configuration file
+[x] Configuration file
 
 Key:
 

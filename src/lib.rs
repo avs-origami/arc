@@ -15,22 +15,27 @@ use lazy_static::lazy_static;
 
 pub mod args;
 pub mod actions;
+pub mod config;
 pub mod bars;
 pub mod log;
 pub mod util;
 
 lazy_static! {
     pub static ref HOME: String = env::var("HOME").unwrap_or_else(|_| {
-        log::die("$HOME is not set");
+        log::die("$HOME is not set!");
     });
 
-    pub static ref ARC_PATH_STR: String = env::var("ARC_PATH").unwrap_or_else(|_| {
-        log::die("$ARC_PATH is not set");
+    pub static ref CFG_STR: String = fs::read_to_string("/etc/arc.toml").unwrap_or_else(|x| {
+        log::die(&format!("Couldn't read config file at /etc/arc.toml: {:#}", x));
     });
 
-    pub static ref ARC_PATH: Vec<&'static str> = ARC_PATH_STR.split(':').collect();
+    pub static ref CFG: config::Config = toml::from_str(&*CFG_STR).unwrap_or_else(|x| {
+        log::die(&format!("Couldn't parse config file at /etc/arc.toml: {:#}", x));
+    });
 
-    pub static ref CACHE: String = format!("{}/.cache/arc", *HOME);
+    pub static ref ARC_PATH: Vec<String> = CFG.path.clone();
+
+    pub static ref CACHE: String = CFG.cache_dir.clone().unwrap_or(format!("{}/.cache/arc", *HOME));
 }
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");

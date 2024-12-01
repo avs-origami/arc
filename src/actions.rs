@@ -16,7 +16,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use nix::unistd::Uid;
 use serde::Deserialize;
 
-use crate::{info_fmt, info_ident_fmt, ARC_PATH, CACHE};
+use crate::{info_fmt, info_ident_fmt, ARC_PATH, CACHE, CFG};
 use crate::args;
 use crate::bars;
 use crate::log;
@@ -468,7 +468,7 @@ pub fn build_all(
         let mut build_cmd = Command::new(build_script);
         build_cmd.arg(&dest_dir).arg(&version).current_dir(src_dir);
 
-        let build_status = if !args.verbose {
+        let build_status = if !(args.verbose || CFG.verbose_builds) {
             // This is the default behavior if the 'v' flag wasn't given. Just
             // pipe the build output to log.txt.
             build_cmd.stdout(log_file.try_clone()?).stderr(log_file.try_clone()?);
@@ -499,7 +499,7 @@ pub fn build_all(
             child.wait().context(format!("Couldn't wait on child process {dir}/build"))?
         };
 
-        if args.verbose { eprintln!(); }
+        if args.verbose || CFG.verbose_builds { eprintln!(); }
 
         if build_status.success() {
             info_fmt!("\x1b[36m{}\x1b[0m Successfully built package", name);
@@ -508,7 +508,7 @@ pub fn build_all(
         }
         
         // Strip unneeded symbols from binaries to reduce the package size.
-        if toml.meta.strip.unwrap_or(true) {
+        if toml.meta.strip.unwrap_or(CFG.strip) {
             info_fmt!("\x1b[36m{}\x1b[0m Stripping binaries", name);
             for file in glob(&format!("{dest_dir}/**/*"))? {
                 let path = format!("{}", file?.display());
@@ -588,31 +588,33 @@ pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
         for line in manifest_content.lines() {
             if let Some(n) = is_tracked(&line.into())? {
                 let other_name = n.split('@').collect::<Vec<&str>>()[0];
-                if fs::metadata(line)?.is_file() && other_name != name {
-                    if log::prompt_yn(&format!("WARNING: File {line} is already tracked by package {other_name}; overwrite it?"), 33)? {
-                        // If the user chooses to use the file from this package, remove the entry
-                        // for that file from the other package's manifest.
-                        let mut other_manifest = fs::read_to_string(&format!("/var/cache/arc/installed/{n}"))
-                            .context(format!("Couldn't read /var/cache/arc/installed/{n}"))?;
+                if let Ok(fsmeta) = fs::metadata(line) {
+                    if fsmeta.is_file() && other_name != name {
+                        if log::prompt_yn(&format!("WARNING: File {line} is already tracked by package {other_name}; overwrite it?"), 33)? {
+                            // If the user chooses to use the file from this package, remove the entry
+                            // for that file from the other package's manifest.
+                            let mut other_manifest = fs::read_to_string(&format!("/var/cache/arc/installed/{n}"))
+                                .context(format!("Couldn't read /var/cache/arc/installed/{n}"))?;
 
-                        other_manifest = other_manifest.replace(&(line.to_owned() + "\n"), "");
-                        
-                        let mut other = File::create(format!("{tmp_dir}/var/cache/arc/installed/{n}"))
-                            .context(format!("Couldn't create file {tmp_dir}/var/cache/arc/installed/{n}"))?;
+                            other_manifest = other_manifest.replace(&(line.to_owned() + "\n"), "");
+                    
+                            let mut other = File::create(format!("{tmp_dir}/var/cache/arc/installed/{n}"))
+                                .context(format!("Couldn't create file {tmp_dir}/var/cache/arc/installed/{n}"))?;
 
-                        other.write_all(other_manifest.as_bytes()).context("Couldn't write new manifest")?;
-                    } else {
-                        // If the user doesn't want to replace the file, remove the file from the
-                        // temp dir and the packge's manifest.
-                        fs::remove_file(format!("{tmp_dir}/{line}")).context(format!("Couldn't remove file {tmp_dir}/{line}"))?;
+                            other.write_all(other_manifest.as_bytes()).context("Couldn't write new manifest")?;
+                        } else {
+                            // If the user doesn't want to replace the file, remove the file from the
+                            // temp dir and the packge's manifest.
+                            fs::remove_file(format!("{tmp_dir}/{line}")).context(format!("Couldn't remove file {tmp_dir}/{line}"))?;
                         
-                        let new_content = fs::read_to_string(format!("{tmp_dir}/{manifest}")).context(format!("Couldn't read manifest at {tmp_dir}/{manifest}"))?;
-                        let new_manifest = new_content.replace(&(line.to_owned() + "\n"), "");
-                        
-                        let mut this_manifest = File::create(format!("{tmp_dir}/{manifest}"))
-                            .context(format!("Couldn't create file {tmp_dir}/var/cache/arc/installed/{n}"))?;
+                            let new_content = fs::read_to_string(format!("{tmp_dir}/{manifest}")).context(format!("Couldn't read manifest at {tmp_dir}/{manifest}"))?;
+                            let new_manifest = new_content.replace(&(line.to_owned() + "\n"), "");
+                
+                            let mut this_manifest = File::create(format!("{tmp_dir}/{manifest}"))
+                                .context(format!("Couldn't create file {tmp_dir}/var/cache/arc/installed/{n}"))?;
 
-                        this_manifest.write_all(new_manifest.as_bytes()).context("Couldn't write new manifest")?;
+                            this_manifest.write_all(new_manifest.as_bytes()).context("Couldn't write new manifest")?;
+                        }
                     }
                 }
             }
@@ -620,7 +622,9 @@ pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
     }
 
 
-    let su_command = if fs::metadata("/bin/sudo").is_ok() {
+    let su_command = if let Some(x) = &CFG.su_cmd {
+        x.as_str()
+    } else if fs::metadata("/bin/sudo").is_ok() {
         "sudo"
     } else if fs::metadata("/bin/doas").is_ok() {
         "doas"
@@ -639,8 +643,8 @@ pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
         let version = &toml.meta.version;
         let tmp_dir = format!("{}/tmp/{name}", *CACHE);
 
-        let install_dirs = format!("find {tmp_dir}/. -type d -exec sh -c 'mkdir -p /${{0#{tmp_dir}}}' {{}} \\;");
-        let install_files = format!("find {tmp_dir}/. -type f -exec sh -c 'cp $0 /${{0#{tmp_dir}}}' {{}} \\;");
+        let install_dirs = format!("find {tmp_dir}/. -type d -exec sh -c 'mkdir -p \"/${{0#{tmp_dir}}}\"' {{}} \\;");
+        let install_files = format!("find {tmp_dir}/. ! -type d -exec sh -c 'cp -d \"$0\" \"/${{0#{tmp_dir}}}\"' {{}} \\;");
 
         if Uid::effective().is_root() {
             Command::new("sh")
@@ -709,7 +713,7 @@ pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
             }
 
             // Remove the temp dir.
-            Command::new(su_command)
+            Command::new(&su_command)
                 .args(["rm", "-rf", &tmp_dir])
                 .status()
                 .context(format!("Couldn't remove temp dir {tmp_dir}"))?;

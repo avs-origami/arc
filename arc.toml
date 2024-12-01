@@ -1,0 +1,26 @@
+# List of repositories that arc should search for packages. The full path to
+# each repository should be provided.
+path = [
+    "/var/repo/core",
+    "/var/repo/extra",
+]
+
+# Controls whether to display output from build scripts to the terminal. If true
+# build script output will be shown for all bulds, and if false it will only be
+# shown if the 'v' flag is provided at the command line.
+verbose_builds = false
+
+# Controls whether to strip binaries. If true, all packages will have their
+# binaries stripped by default, and if false binaries will not be stripped by
+# default. Individual packages can override this setting by setting
+# the 'strip' key under the [meta] section in package.toml.
+strip = true
+
+# Specify a command to use for privelege escalation. If this is not set, arc
+# will look for and use one of 'sudo', 'doas', or 'ssu' (in that order). Also
+# assumes the syntax is similar to that of 'sudo'.
+# su_command = "doas"
+
+# Specify a different cache directory for builds. If this is not set, arc will
+# use ~/.cache/arc by default.
+# cache_dir = "/tmp/arc"
