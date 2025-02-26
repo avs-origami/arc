@@ -18,6 +18,17 @@ fn main() {
         }
     }
 
+    // Create the package installation cache, if it doesn't exist. This
+    // directory is where all package files are tracked by the package manager.
+    match fs::create_dir_all("/var/cache/arc/installed")
+        .context("Failed to create install cache /var/cache/arc/installed")
+    {
+        Ok(_) => (),
+        Err(e) => {
+            log::die(&format!("{:#}", &e));
+        }
+    }
+
     // Collect and parse CLI arguments.
     let mut cli_args: Vec<String> = env::args().collect();
     let parsed = args::parse(&mut cli_args);
