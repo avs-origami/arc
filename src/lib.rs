@@ -51,7 +51,17 @@ checksums = []
 ";
 
 /// Print out a pretty help message and terminate with a given exit code.
-pub fn print_help(code: i32) -> ! {
+pub fn print_help(code: i32, msg: String) -> ! {
+    if msg.len() > 0 {
+        log::log(&format!("ERROR: {msg}"), 31);
+    }
+
+    let cache_display = if *CACHE == format!("{}/.cache/arc", *HOME) {
+        "$HOME/.cache/arc"
+    } else {
+        &*CACHE.clone()
+    };
+
     eprintln!();
     eprintln!("    \x1b[35m.---.");
     eprintln!("   \x1b[35m/\\  \\ \\   \x1b[33m___ \x1b[36m____");
@@ -68,7 +78,7 @@ pub fn print_help(code: i32) -> ! {
     log::info_ident("i / install   Install built packages");
     log::info_ident("l / list      List installed packages");
     log::info_ident("n / new       Create a blank package");
-    log::info_ident("p / purge     Purge the package cache ($HOME/.cache/arc)");
+    info_ident_fmt!("p / purge     Purge the package cache ({cache_display})");
     log::info_ident("r / remove    Remove packages");
     log::info_ident("s / sync      Sync remote repositories");
     log::info_ident("u / upgrade   Upgrade all packages");
@@ -379,9 +389,19 @@ pub fn remove(packs: &Vec<String>, args: &args::Cmd) -> Result<()> {
         let manifest = fs::read_to_string(&manifest_path)
             .context(format!("Couldn't read manifest of package {pack} at {}", manifest_path.display()))?;
 
+        if manifest.starts_with("->") {
+            let real_pack = &manifest.lines().next().unwrap()[3..];
+            let real_name = real_pack.split('@').next().unwrap();
+            bail!("Package '{pack}' is provided by '{real_pack}'; to remove it, remove '{real_name}' instead");
+        }
+
         // Since the manifest was generated using a glob, we iterate through
         // the lines in reverse to remove the deepest files first.
         for file in manifest.lines().rev() {
+            if file == "/var/cache/arc/installed" {
+                continue;
+            }
+
             let _ = Command::new("rmdir")
                 .arg(file)
                 .stdout(Stdio::null())

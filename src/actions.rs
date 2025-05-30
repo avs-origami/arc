@@ -535,6 +535,18 @@ pub fn build_all(
         let mut manifest_file = File::create(&manifest)
             .context(format!("Couldn't create file {manifest}"))?;
 
+        // Create dummy manifests for any packages provided by this one.
+        if let Some(x) = &toml.provides {
+            for (nam, ver) in x {
+                let man = format!("{manifest_dir}/{nam}@{ver}");
+                let mut dum_man = File::create(&man)
+                    .context(format!("Couldn't create file {man}"))?;
+
+                dum_man.write_all(format!("-> {name}@{version}\n").as_bytes())
+                    .context(format!("Couldn't write to file {man}"))?;
+            }
+        }
+
         // Use a glob to get the contents of destdir.
         let mut manifest_content = String::new();
         for file in glob(&format!("{dest_dir}/**/*"))? {

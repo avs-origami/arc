@@ -48,7 +48,7 @@ fn main() {
     let status = match parsed.kind {
         Op::Build(ref x) => arc::build(x, &parsed),
         Op::Checksum => arc::generate_checksums(),
-        Op::Die(x) => arc::print_help(x),
+        Op::Die(x, msg) => arc::print_help(x, msg),
         Op::Download(ref x) => arc::download(x),
         Op::Find(x) => arc::search(x),
         Op::Install(ref x) => arc::install(x, &parsed),

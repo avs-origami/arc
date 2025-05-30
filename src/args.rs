@@ -4,7 +4,7 @@
 pub enum Op {
     Build(Vec<String>),
     Checksum,
-    Die(i32),
+    Die(i32, String),
     Download(Vec<String>),
     Find(String),
     Install(Vec<String>),
@@ -18,7 +18,7 @@ pub enum Op {
 
 impl Default for Op {
     fn default() -> Self {
-        Op::Die(0)
+        Op::Die(0, "".into())
     }
 }
 
@@ -40,12 +40,12 @@ pub fn parse(args: &mut Vec<String>) -> Cmd {
                 if args.len() > 2 {
                     break Op::Build(args[2..].to_vec());
                 } else {
-                    break Op::Die(1);
+                    break Op::Die(1, "Missing required argument(s) for command 'build'".into());
                 }
             },
             "c" | "checksum" => {
                 if args.len() > 2 {
-                    break Op::Die(1);
+                    break Op::Die(1, "Too many arguments for command 'checksum'".into());
                 } else {
                     break Op::Checksum;
                 }
@@ -54,42 +54,42 @@ pub fn parse(args: &mut Vec<String>) -> Cmd {
                 if args.len() > 2 {
                     break Op::Download(args[2..].to_vec());
                 } else {
-                    break Op::Die(1);
+                    break Op::Die(1, "Missing required argument(s) for command 'download'".into());
                 }
             },
             "f" | "find" => {
                 if args.len() > 2 {
                     break Op::Find(args[2].clone());
                 } else {
-                    break Op::Die(1);
+                    break Op::Die(1, "Missing required argument for command 'find'".into());
                 }
             },
             "i" | "install" => {
                 if args.len() > 2 {
                     break Op::Install(args[2..].to_vec());
                 } else {
-                    break Op::Die(1);
+                    break Op::Die(1, "Missing required argument(s) for command 'install'".into());
                 }
             },
             "n" | "new" => {
                 if args.len() > 2 {
                     break Op::New(args[2].clone());
                 } else {
-                    break Op::Die(1);
+                    break Op::Die(1, "Missing required argument for command 'new'".into());
                 }
             },
             "r" | "remove" => {
                 if args.len() > 2 {
                     break Op::Remove(args[2..].to_vec());
                 } else {
-                    break Op::Die(1);
+                    break Op::Die(1, "Missing required argument(s) for command 'remove'".into());
                 }
             },
             "l" | "list" => break Op::List,
             "p" | "purge" => break Op::Purge,
             "u" | "upgrade" => break Op::Upgrade,
             "v" | "version" => break Op::Version,
-            "h" | "help" => break Op::Die(0),
+            "h" | "help" => break Op::Die(0, "".into()),
             x => {
                 for c in x.chars() {
                     match c {
@@ -103,7 +103,7 @@ pub fn parse(args: &mut Vec<String>) -> Cmd {
                     continue 'o;
                 }
 
-                break Op::Die(1);
+                break Op::Die(1, format!("Unknown command {x}"));
             },
         }};
 
