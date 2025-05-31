@@ -1,7 +1,7 @@
 //! This module contains logic that is used by functions in lib.rs but cannot
 //! be directly called by the user.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
@@ -122,7 +122,7 @@ pub fn summary(packs: &Vec<String>, args: &args::Cmd, header: &str) -> Result<(
     }).len();
 
     // Resolve all dependencies, getting package.toml and the path for each.
-    let (dep_toml, mkdep_toml) = resolve_deps(&pack_toml, 1)?;
+    let (dep_toml, mkdep_toml) = resolve_deps(&pack_toml, 1, &mut HashSet::new())?;
     let dep_names: Vec<String> = dep_toml.iter().map(|x| x.name.clone()).collect();
     let mkdep_names: Vec<String> = mkdep_toml.iter().map(|x| x.name.clone()).collect();
 
@@ -298,11 +298,22 @@ pub fn download_all(
 pub fn resolve_deps(
     pack_toml: &Vec<Package>,
     depth: usize,
+    visiting: &mut HashSet<String>,
 ) -> Result<(Vec<Package>, Vec<Package>)> {
     let mut raw_deps = vec![];
     let mut raw_mkdeps = vec![];
     for toml in pack_toml {
+        let root = &toml.name;
         for (name, ver_req) in &toml.deps {
+            // Check for circular dependencies: if the current dependency branch
+            // contains this package, bail.
+            if visiting.contains(name) {
+                bail!(
+                    "Circular dependency detected: package {root} depends on itself.\
+                     \n   Current branch: {visiting:?}"
+                );
+            }
+
             // If a satisfactory version of this dependency is installed,
             // skip to the next one.
             if is_installed(name, ver_req)? { continue; }
@@ -314,13 +325,24 @@ pub fn resolve_deps(
 
             // Get dependencies and make dependencies of this dependency, and
             // add everything to the list of dependencies.
-            let mut deps = resolve_deps(&dep_toml, depth + 1)?;
+            visiting.insert(name.clone());
+            let mut deps = resolve_deps(&dep_toml, depth + 1, visiting)?;
+            visiting.remove(name);
             raw_deps.push(dep_toml.remove(0));
             raw_deps.append(&mut deps.0);
             raw_mkdeps.append(&mut deps.1);
         }
 
         for (name, ver_req) in &toml.mkdeps {
+            // Check for circular dependencies: if the current dependency branch
+            // contains this package, bail.
+            if visiting.contains(name) {
+                bail!(
+                    "Circular dependency detected: package {root} depends on itself.\
+                     \n   Current branch: {visiting:?}"
+                );
+            }
+
             // If a satisfactory version of this make dependency is installed,
             // skip to the next one.
             if is_installed(name, ver_req)? { continue; }
@@ -333,7 +355,9 @@ pub fn resolve_deps(
 
             // Get dependencies and make dependencies of this dependency, and
             // add everything to the list of dependencies.
-            let mut deps = resolve_deps(&mkdep_toml, depth + 1)?;
+            visiting.insert(name.clone());
+            let mut deps = resolve_deps(&mkdep_toml, depth + 1, visiting)?;
+            visiting.remove(name);
             raw_mkdeps.push(mkdep_toml.remove(0));
             raw_mkdeps.append(&mut deps.0);
             raw_mkdeps.append(&mut deps.1);

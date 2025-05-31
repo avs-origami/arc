@@ -20,14 +20,14 @@ Also copy 'arc.toml' to '/etc/arc.toml' and edit as necessary.
 
 This is a list of all planned features and their implementation status.
 
-[-] Build / install
+[x] Build / install
     [x] Download remote sources
         [x] Generate / verify checksums
         [x] Copy / extract sources to build dir
-    [-] Dependency resolution
+    [x] Dependency resolution
         [x] Build / install dependencies in order
         [x] Build / install make dependencies
-        [ ] Circular dependency checks
+        [x] Circular dependency checks
         [x] Provides system
     [x] Conflict resolution
     [x] Build packages and install to destdir
