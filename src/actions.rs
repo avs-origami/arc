@@ -233,6 +233,7 @@ pub fn summary(packs: &Vec<String>, args: &args::Cmd, header: &str) -> Result<(
 
     for toml in &pack_toml {
         if dep_names.contains(&toml.name) { continue; }
+        if mkdep_names.contains(&toml.name) { continue; }
         println!("   {: <pad$} {: <version_pad$} (explicit)", toml.name, toml.meta.version);
     }
 
