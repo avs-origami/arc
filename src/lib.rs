@@ -282,7 +282,6 @@ pub fn build(packs: &Vec<String>, args: &args::Cmd) -> Result<()> {
     log::info("Verifying checksums");
     actions::checksums_all(&pack_toml, real_pad)?;
     actions::checksums_all(&dep_toml, real_pad)?;
-    actions::checksums_all(&dep_toml, real_pad)?;
     eprintln!();
 
     // If we have any make dependencies, build and install them first.
