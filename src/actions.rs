@@ -624,7 +624,7 @@ pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
             .status()
             .context(format!("Couldn't extract binary tarball to temp dir"))?;
 
-        log::info("Checking for conflicts");
+        info_fmt!("\x1b[36m{name}\x1b[0m Checking for conflicts");
         let manifest_content = fs::read_to_string(format!("{tmp_dir}/{manifest}")).context(format!("Couldn't read manifest at {tmp_dir}/{manifest}"))?;
         for line in manifest_content.lines() {
             if let Some(n) = is_tracked(&line.into())? {
