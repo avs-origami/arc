@@ -218,7 +218,19 @@ pub fn upgrade(args: &args::Cmd) -> Result<()> {
         let name = pkg?.display().to_string();
         let basename = name.split('/').last().unwrap();
         let name_no_ver = basename.split('@').nth(0).unwrap().to_string();
-        let parsed = actions::parse_package(&vec![name_no_ver])?[0].clone();
+        let parsed_maybe_err = actions::parse_package(&vec![name_no_ver]);
+        let Ok(prs) = parsed_maybe_err else {
+            // If an installed package is not in the repos, ignore it, but only
+            // ignore errors caused by "couldn't resolve package."
+            let err = parsed_maybe_err.unwrap_err();
+            if err.to_string().contains("Couldn't resolve package") {
+                continue;
+            } else {
+                return Err(err);
+            }
+        };
+
+        let parsed = prs[0].clone();
 
         if ! actions::is_installed(&parsed.name, &parsed.meta.version)? {
             packs.push(parsed.name);
