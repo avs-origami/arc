@@ -23,4 +23,4 @@ strip = true
 
 # Specify a different cache directory for builds. If this is not set, arc will
 # use ~/.cache/arc by default.
-# cache_dir = "/tmp/arc"
+# cache_dir = "/tmp/moss"
