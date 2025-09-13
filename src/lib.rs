@@ -25,17 +25,17 @@ lazy_static! {
         log::die("$HOME is not set!");
     });
 
-    pub static ref CFG_STR: String = fs::read_to_string("/etc/arc.toml").unwrap_or_else(|x| {
-        log::die(&format!("Couldn't read config file at /etc/arc.toml: {:#}", x));
+    pub static ref CFG_STR: String = fs::read_to_string("/etc/moss.toml").unwrap_or_else(|x| {
+        log::die(&format!("Couldn't read config file at /etc/moss.toml: {:#}", x));
     });
 
     pub static ref CFG: config::Config = toml::from_str(&*CFG_STR).unwrap_or_else(|x| {
-        log::die(&format!("Couldn't parse config file at /etc/arc.toml: {:#}", x));
+        log::die(&format!("Couldn't parse config file at /etc/moss.toml: {:#}", x));
     });
 
     pub static ref ARC_PATH: Vec<String> = CFG.path.clone();
 
-    pub static ref CACHE: String = CFG.cache_dir.clone().unwrap_or(format!("{}/.cache/arc", *HOME));
+    pub static ref CACHE: String = CFG.cache_dir.clone().unwrap_or(format!("{}/.cache/moss", *HOME));
 }
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -56,20 +56,19 @@ pub fn print_help(code: i32, msg: String) -> ! {
         log::log(&format!("ERROR: {msg}"), 31);
     }
 
-    let cache_display = if *CACHE == format!("{}/.cache/arc", *HOME) {
-        "$HOME/.cache/arc"
+    let cache_display = if *CACHE == format!("{}/.cache/moss", *HOME) {
+        "$HOME/.cache/moss"
     } else {
         &*CACHE.clone()
     };
 
     eprintln!();
-    eprintln!("    \x1b[35m.---.");
-    eprintln!("   \x1b[35m/\\  \\ \\   \x1b[33m___ \x1b[36m____");
-    eprintln!("  \x1b[35m/  \\ -\\ \\\x1b[33m_/__ \x1b[36m/ __/");
-    eprintln!(" \x1b[35m/ / /\\  \\ \\  \x1b[33m\\_\x1b[36m\\ |__.");
-    eprintln!("\x1b[35m/__./  \\.___\\    \x1b[36m\\___/");
+    eprintln!("  \x1b[32m/\\/\\   ___  ___ ___ \x1b[0m");
+    eprintln!(" \x1b[33m/    \\ \x1b[32m/ \x1b[36m_\x1b[32m \\/ __/ __|\x1b[0m");
+    eprintln!("\x1b[35m/ /\\/\\ \\ \x1b[36m(_)\x1b[90m \\__ \\__ \\");
+    eprintln!("\x1b[35m\\/    \\/\x1b[90m\\\x1b[33m___\x1b[90m/|\x1b[33m___\x1b[90m/\x1b[33m___\x1b[90m/");
     eprintln!("\x1b[0m");
-    eprintln!("Usage: \x1b[33marc\x1b[0m [s/v/y][b/c/d/f/h/i/l/n/p/r/s/u/v] [pkg]...");
+    eprintln!("Usage: \x1b[33mmoss\x1b[0m [s/v/y][b/c/d/f/h/i/l/n/p/r/s/u/v] [pkg]...");
     log::info_ident("b / build     Build packages");
     log::info_ident("c / checksum  Generate checksums");
     log::info_ident("d / download  Download sources");
@@ -93,7 +92,7 @@ pub fn print_help(code: i32, msg: String) -> ! {
 
 /// Print out the version and exit.
 pub fn version() -> ! {
-    log::info(&format!("Arc package manager version {VERSION}"));
+    log::info(&format!("Moss package manager version {VERSION}"));
     process::exit(0)
 }
 
@@ -136,7 +135,7 @@ pub fn purge_cache() -> Result<()> {
 
 /// List installed packages, one per line.
 pub fn list() -> Result<()> {
-    let installed = glob::glob("/var/cache/arc/installed/*")?;
+    let installed = glob::glob("/var/cache/moss/installed/*")?;
     for pkg in installed {
         info_fmt!("{}", &pkg?.display().to_string().split('/').last().unwrap());
     }
@@ -212,7 +211,7 @@ pub fn sync() -> Result<()> {
 /// Perform a full system upgrade (update packages that have available updates).
 pub fn upgrade(args: &args::Cmd) -> Result<()> {
     log::info("Performing full system upgrade.");
-    let installed = glob::glob("/var/cache/arc/installed/*")?;
+    let installed = glob::glob("/var/cache/moss/installed/*")?;
     let mut packs = vec![];
 
     for pkg in installed {
@@ -380,8 +379,8 @@ pub fn remove(packs: &Vec<String>, args: &args::Cmd) -> Result<()> {
         }
 
         // Read the package manifest.
-        let mut manifest_glob = glob(&format!("/var/cache/arc/installed/{pack}@*"))
-            .context(format!("Error constructing glob /var/cache/arc/installed/{pack}@*"))?;
+        let mut manifest_glob = glob(&format!("/var/cache/moss/installed/{pack}@*"))
+            .context(format!("Error constructing glob /var/cache/moss/installed/{pack}@*"))?;
 
         let manifest_path = manifest_glob.next().unwrap().context("Couldn't get manifest path")?;
 
@@ -397,7 +396,7 @@ pub fn remove(packs: &Vec<String>, args: &args::Cmd) -> Result<()> {
         // Since the manifest was generated using a glob, we iterate through
         // the lines in reverse to remove the deepest files first.
         for file in manifest.lines().rev() {
-            if file == "/var/cache/arc/installed" {
+            if file == "/var/cache/moss/installed" {
                 continue;
             }
 

@@ -49,13 +49,13 @@ pub struct PackMeta {
 
 /// Check if a specific version of a package is installed.
 pub fn is_installed(pack: &String, version: &String) -> Result<bool> {
-    let mut path = glob(&format!("/var/cache/arc/installed/{pack}@{version}"))?;
+    let mut path = glob(&format!("/var/cache/moss/installed/{pack}@{version}"))?;
     Ok(path.next().is_some())
 }
 
 /// Check if a file is tracked by any installed packages.
 pub fn is_tracked(file: &String) -> Result<Option<String>> {
-    for f in fs::read_dir("/var/cache/arc/installed/")? {
+    for f in fs::read_dir("/var/cache/moss/installed/")? {
         let uf = f?;
         let content = fs::read_to_string(&uf.path())?;
         if content.contains(&format!("{file}\n")) {
@@ -440,7 +440,7 @@ pub fn checksums_all(
 ///      - If the 'v' flag was provided, tee the output to stdout and log.txt.
 ///      - Otherwise, pipe the output to log.txt.
 /// 4. Generate a package manifest using a glob of the destdir, and write it to
-///    destdir/var/cache/arc/installed/<name>@<version>.
+///    destdir/var/cache/moss/installed/<name>@<version>.
 /// 5. Generate a tarball of the destdir and save it in the cache directory.
 pub fn build_all(
     pack_toml: &Vec<Package>,
@@ -549,9 +549,9 @@ pub fn build_all(
         }
  
         // Create the package manifest at
-        // destdir/var/cache/arc/installed/<name>@<version>.
+        // destdir/var/cache/moss/installed/<name>@<version>.
         info_fmt!("\x1b[36m{}\x1b[0m Generating manifest", name);
-        let manifest_dir = format!("{dest_dir}/var/cache/arc/installed");
+        let manifest_dir = format!("{dest_dir}/var/cache/moss/installed");
         let manifest = format!("{manifest_dir}/{name}@{version}");
 
         fs::create_dir_all(&manifest_dir)
@@ -614,7 +614,7 @@ pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
         let name = &toml.name;
         let version = &toml.meta.version;
         let bin_file = format!("{}/bin/{name}@{version}.tar.gz", *CACHE);
-        let manifest = format!("./var/cache/arc/installed/{name}@{version}");
+        let manifest = format!("./var/cache/moss/installed/{name}@{version}");
         let tmp_dir = format!("{}/tmp/{name}", *CACHE);
 
         fs::create_dir_all(&tmp_dir).context(format!("Couldn't create temp dir {tmp_dir}"))?;
@@ -634,13 +634,13 @@ pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
                         if log::prompt_yn(&format!("WARNING: File {line} is already tracked by package {other_name}; overwrite it?"), 33)? {
                             // If the user chooses to use the file from this package, remove the entry
                             // for that file from the other package's manifest.
-                            let mut other_manifest = fs::read_to_string(&format!("/var/cache/arc/installed/{n}"))
-                                .context(format!("Couldn't read /var/cache/arc/installed/{n}"))?;
+                            let mut other_manifest = fs::read_to_string(&format!("/var/cache/moss/installed/{n}"))
+                                .context(format!("Couldn't read /var/cache/moss/installed/{n}"))?;
 
                             other_manifest = other_manifest.replace(&(line.to_owned() + "\n"), "");
                     
-                            let mut other = File::create(format!("{tmp_dir}/var/cache/arc/installed/{n}"))
-                                .context(format!("Couldn't create file {tmp_dir}/var/cache/arc/installed/{n}"))?;
+                            let mut other = File::create(format!("{tmp_dir}/var/cache/moss/installed/{n}"))
+                                .context(format!("Couldn't create file {tmp_dir}/var/cache/moss/installed/{n}"))?;
 
                             other.write_all(other_manifest.as_bytes()).context("Couldn't write new manifest")?;
                         } else {
@@ -652,7 +652,7 @@ pub fn install_all(pack_toml: &Vec<Package>) -> Result<()> {
                             let new_manifest = new_content.replace(&(line.to_owned() + "\n"), "");
                 
                             let mut this_manifest = File::create(format!("{tmp_dir}/{manifest}"))
-                                .context(format!("Couldn't create file {tmp_dir}/var/cache/arc/installed/{n}"))?;
+                                .context(format!("Couldn't create file {tmp_dir}/var/cache/moss/installed/{n}"))?;
 
                             this_manifest.write_all(new_manifest.as_bytes()).context("Couldn't write new manifest")?;
                         }

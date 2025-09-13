@@ -1,19 +1,19 @@
 |---------------------------|
-| ARC                       |          _____               .---.
-|---------------------------|  @_@    /  __ \ __,  ____   /\  \ \   ___ ____
-| A tiny package manager    |  \  \__/ ,'z i \/   ____   /  \ -\ \_/__ / __/
-| written in Rust.          |   7  \ \ i  ^' /  _____   / / /\  \ \  \_\ |__.
-|---------------------------|    \__________/ ______   /__./  \.___\    \___/
+| MOSS                      |          _____             
+|---------------------------|  @_@    /  __ \ __,  ____  /\/\   ___  ___ ___
+| A tiny package manager    |  \  \__/ ,'z i \/  _____  /    \ / _ \/ __/ __|
+| written in Rust.          |   7  \ \ i  ^' /  _____  / /\/\ \ (_) \__ \__ \
+|---------------------------|    \__________/  _____   \/    \/\___/|___/___/
 =~=~=~=~=~=~=~=~=~=~=~=~=~=~=
 
-Arc is a tiny, lightning-fast package manager written in Rust, inspired by Kiss,
-and the successor to my previous package manager adventure.
+Moss (formerly Arc) is a tiny, lightning-fast package manager written in Rust,
+inspired by Kiss, and the successor to my previous package manager adventure.
 
 === Building
 ============
 
-Just run 'cargo build --release' and copy 'target/release/arc' to your bin dir.
-Also copy 'arc.toml' to '/etc/arc.toml' and edit as necessary.
+Just run 'cargo build --release' and copy 'target/release/moss' to your bin dir.
+Also copy 'moss.toml' to '/etc/moss.toml' and edit as necessary.
 
 === Progress
 ============
