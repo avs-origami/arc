@@ -65,8 +65,8 @@ pub fn print_help(code: i32, msg: String) -> ! {
     eprintln!();
     eprintln!("  \x1b[32m/\\/\\   ___  ___ ___ \x1b[0m");
     eprintln!(" \x1b[33m/    \\ \x1b[32m/ \x1b[36m_\x1b[32m \\/ __/ __|\x1b[0m");
-    eprintln!("\x1b[35m/ /\\/\\ \\ \x1b[36m(_)\x1b[90m \\__ \\__ \\");
-    eprintln!("\x1b[35m\\/    \\/\x1b[90m\\\x1b[33m___\x1b[90m/|\x1b[33m___\x1b[90m/\x1b[33m___\x1b[90m/");
+    eprintln!("\x1b[35m/ /\\/\\ \\ \x1b[36m(_)\x1b[90m \\__ \\__ \\\x1b[0m");
+    eprintln!("\x1b[35m\\/    \\/\x1b[90m\\\x1b[0m\x1b[33m___\x1b[90m/|\x1b[0m\x1b[33m___\x1b[90m/\x1b[0m\x1b[33m___\x1b[90m/");
     eprintln!("\x1b[0m");
     eprintln!("Usage: \x1b[33mmoss\x1b[0m [s/v/y][b/c/d/f/h/i/l/n/p/r/s/u/v] [pkg]...");
     log::info_ident("b / build     Build packages");
@@ -293,6 +293,7 @@ pub fn build(packs: &Vec<String>, args: &args::Cmd) -> Result<()> {
     log::info("Verifying checksums");
     actions::checksums_all(&pack_toml, real_pad)?;
     actions::checksums_all(&dep_toml, real_pad)?;
+    actions::checksums_all(&mkdep_toml, real_pad)?;
     eprintln!();
 
     // If we have any make dependencies, build and install them first.
